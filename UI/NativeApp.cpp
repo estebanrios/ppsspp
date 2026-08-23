@@ -595,11 +595,6 @@ void NativeInit(int argc, const char *argv[], const CommandLineOptions &cmdLineO
 		g_Config.defaultCurrentDirectory = Path(external_dir);
 	}
 
-	// Might also add an option to move it to internal / non-visible storage, but there's
-	// little point, really.
-
-	g_Config.flash0Directory = Path(external_dir) / "flash0";
-
 	Path memstickDirFile = g_Config.internalDataDirectory / "memstick_dir.txt";
 	if (File::Exists(memstickDirFile)) {
 		INFO_LOG(Log::System, "Reading '%s' to find memstick dir.", memstickDirFile.c_str());
@@ -683,6 +678,9 @@ void NativeInit(int argc, const char *argv[], const CommandLineOptions &cmdLineO
 		g_Config.currentDirectory = g_Config.defaultCurrentDirectory;
 	}
 
+	// Mount a filesystem
+	g_Config.nandRootDirectory = GetSysDirectory(DIRECTORY_NAND);
+
 	if (cache_dir && strlen(cache_dir)) {
 		g_Config.appCacheDirectory = Path(cache_dir);
 		DiskCachingFileLoaderCache::SetCacheDir(g_Config.appCacheDirectory);
@@ -702,7 +700,7 @@ void NativeInit(int argc, const char *argv[], const CommandLineOptions &cmdLineO
 
 	boot_filename.clear();
 	if (boot_filename.empty() && cmdLineOptions.bootVSH.has_value() && cmdLineOptions.bootVSH.value()) {
-		boot_filename = g_Config.flash0Directory / "vsh/module/vshmain.prx";
+		boot_filename = g_Config.nandRootDirectory / "flash0/vsh/module/vshmain.prx";
 	}
 
 	if (cmdLineOptions.appendConfig.has_value()) {
