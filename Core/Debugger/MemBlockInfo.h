@@ -80,10 +80,19 @@ void MemBlockOverrideDetailed();
 void MemBlockReleaseDetailed();
 bool MemBlockInfoDetailed();
 
+// STV: contabilidad detallada SOLO cuando el ajuste esta puesto.
+// Upstream la deja encendida siempre para copias >= MEMINFO_MIN_SIZE (256 B),
+// lo que mete un mutex global, un memcpy de la etiqueta y un push_back por
+// cada linea de DoBlockTransfer y por cada memcpy del juego reemplazado por
+// HLE. Los unicos consumidores de esos datos son los depuradores
+// (WebSocket/Windows/ImDebugger), asi que atarlo al ajuste que ya existe no
+// cambia ni la emulacion ni la imagen.
 static inline bool MemBlockInfoDetailed(uint32_t size) {
-	return size >= MEMINFO_MIN_SIZE || MemBlockInfoDetailed();
+	(void)size;
+	return MemBlockInfoDetailed();
 }
 
 static inline bool MemBlockInfoDetailed(uint32_t size1, uint32_t size2) {
-	return size1 >= MEMINFO_MIN_SIZE || size2 >= MEMINFO_MIN_SIZE || MemBlockInfoDetailed();
+	(void)size1; (void)size2;
+	return MemBlockInfoDetailed();
 }
