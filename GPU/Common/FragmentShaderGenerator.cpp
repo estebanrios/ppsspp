@@ -48,6 +48,29 @@ static const SamplerDef samplersStereo[3] = {
 	{ 2, "pal" },
 };
 
+// STV_FP16_v1: precision reducida por defecto en el fragment Vulkan del juego.
+// El PSP computaba color en 8 bits; FP16 (RelaxedPrecision, doble ritmo de ALU
+// en Mali) lo representa sin perdida perceptible. Upstream ya dejo el terreno
+// preparado: todo lo delicado lleva highp EXPLICITO (v_texcoord, v_fogdepth,
+// roundAndScaleTo255i, los caminos bitwise en uint) y su propio preambulo
+// utilitario ya usa default reducido. La prop se lee al GENERAR el shader
+// (cacheado por juego): conmutar exige reiniciar el juego, y el default 0 es
+// upstream exacto.
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
+static bool StvFp16Activo() {
+	const char *e = getenv("STV_FP16");
+	if (e && *e)
+		return *e == '1';
+#if defined(__ANDROID__)
+	char prop[92] = {0};
+	if (__system_property_get("debug.stv.fp16", prop) > 0)
+		return prop[0] == '1';
+#endif
+	return false;
+}
+
 bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLanguageDesc &compat, Draw::Bugs bugs, uint64_t *uniformMask, FragmentShaderFlags *fragmentShaderFlags, std::string *errorString) {
 	*uniformMask = 0;
 	*fragmentShaderFlags = (FragmentShaderFlags)0;
@@ -198,6 +221,15 @@ bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLangu
 	std::vector<SamplerDef> samplers;
 
 	if (compat.shaderLanguage == ShaderLanguage::GLSL_VULKAN) {
+		// STV_FP16_v1: default mediump para float (int se queda highp: los
+		// caminos bitwise de depal/writemask/logicop no se tocan). glslang en
+		// modo Vulkan lo baja a RelaxedPrecision en SPIR-V y el Mali corre esa
+		// ALU a doble ritmo. Los sitios que necesitan FP32 ya llevan highp
+		// explicito de upstream.
+		if (StvFp16Activo()) {
+			WRITE(p, "precision mediump float;\n");
+			WRITE(p, "precision highp int;\n");
+		}
 		if (useDiscardStencilBugWorkaround && !writeDepth) {
 			WRITE(p, "layout (depth_unchanged) out float gl_FragDepth;\n");
 		}
