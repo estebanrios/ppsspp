@@ -132,6 +132,12 @@ android {
 		file("versioncode.txt").writeText(gitVersionCode.toString())
 
 		minSdk = 21
+		// STV: sufijo opcional de applicationId para poder instalar nuestros
+		// builds al lado del PPSSPP de referencia sin tocarlo. Solo cambia el
+		// empaquetado; ni una bandera del compilador.
+		if (project.hasProperty("STV_APPID_SUFFIX")) {
+			applicationIdSuffix = project.property("STV_APPID_SUFFIX") as String
+		}
 		targetSdk = 36
 		if (project.hasProperty("ANDROID_VERSION_CODE") && project.hasProperty("ANDROID_VERSION_NAME")) {
 			versionCode = (project.property("ANDROID_VERSION_CODE") as String).toInt()
@@ -203,6 +209,11 @@ android {
 						"-DANDROID_CPP_FEATURES=",
 						"-DANDROID_STL=c++_shared"
 					))
+					// STV: banderas extra para las fases de optimizacion. Vacio en el
+					// build de control, que es justamente el punto.
+					if (project.hasProperty("STV_EXTRA_CMAKE")) {
+						arguments.addAll((project.property("STV_EXTRA_CMAKE") as String).split(";"))
+					}
 				}
 			}
 			ndk {
