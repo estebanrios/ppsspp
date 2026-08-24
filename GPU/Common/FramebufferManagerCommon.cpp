@@ -41,6 +41,26 @@
 #include "GPU/GPUCommon.h"
 #include "GPU/GPUState.h"
 
+// STV_DIAG_FBCOPIAS_v1: lectura barata de la prop del instrumento.
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
+static bool StvFbLogActivo() {
+	static int cache = -1;
+	static int vueltas = 0;
+	if (cache < 0 || ++vueltas >= 60) {
+		vueltas = 0;
+		const char *e = getenv("STV_FBLOG");
+		if (e && *e == '1') { cache = 1; return true; }
+#if defined(__ANDROID__)
+		char prop[PROP_VALUE_MAX] = {0};
+		if (__system_property_get("debug.stv.fblog", prop) > 0 && prop[0] == '1') { cache = 1; return true; }
+#endif
+		cache = 0;
+	}
+	return cache == 1;
+}
+
 static size_t FormatFramebufferName(const VirtualFramebuffer *vfb, char *tag, size_t len) {
 	return snprintf(tag, len, "FB_%08x_%08x_%dx%d_%s", vfb->fb_address, vfb->z_address, vfb->bufferWidth, vfb->bufferHeight, GeBufferFormatToString(vfb->fb_format));
 }
@@ -1351,6 +1371,20 @@ void FramebufferManagerCommon::CopyFramebufferForColorTexture(VirtualFramebuffer
 
 		// We'll have to reapply these next time since we cropped to UV.
 		gstate_c.Dirty(DIRTY_TEXTURE_PARAMS);
+	}
+
+	// STV_DIAG_FBCOPIAS_v1: radiografia del patron de feedback (GoW hace 6
+	// copias parciales del mismo FB por cuadro, intercaladas con draws que
+	// escriben AL mismo FB). La fusion estilo ApplyMGSHack de upstream es
+	// legal SOLO si el rect que cada copia LEE es disjunto de lo que los
+	// draws previos del cuadro ESCRIBIERON (scissor). Este log da el dato.
+	// Prop debug.stv.fblog (o env STV_FBLOG), releida cada ~60 llamadas.
+	if (StvFbLogActivo()) {
+		NOTICE_LOG(Log::G3D, "STVFBLOG copia fb=%08x lee=%d,%d %dx%d scissor_escritura=%d,%d %dx%d",
+			src->fb_address, x, y, w, h,
+			gstate.getScissorX1(), gstate.getScissorY1(),
+			gstate.getScissorX2() - gstate.getScissorX1() + 1,
+			gstate.getScissorY2() - gstate.getScissorY1() + 1);
 	}
 
 	if (x < src->drawnWidth && y < src->drawnHeight && w > 0 && h > 0) {
