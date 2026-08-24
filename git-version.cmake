@@ -3,7 +3,13 @@ set(GIT_VERSION "unknown")
 set(GIT_VERSION_UPDATE "1")
 
 find_package(Git)
-if(GIT_FOUND AND EXISTS "${SOURCE_DIR}/.git/")
+# STV: version pineada. La rama stv/1.20.4 lleva commits encima del tag y el
+# describe daria "v1.20.4-N-g..." contaminando el binario; la prueba de
+# identidad byte a byte del paso 0 de F6 exige la cadena exacta del build de
+# produccion. La identidad real de cada build viaja en el versionName del APK
+# y en los strings de marca STV_*.
+set(GIT_VERSION "v1.20.4")
+if(FALSE AND GIT_FOUND AND EXISTS "${SOURCE_DIR}/.git/")
 	execute_process(COMMAND ${GIT_EXECUTABLE} describe --always
 		WORKING_DIRECTORY ${SOURCE_DIR}
 		RESULT_VARIABLE exit_code
