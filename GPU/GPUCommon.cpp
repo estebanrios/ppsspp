@@ -30,6 +30,7 @@
 #include "Core/MemMapHelpers.h"
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
+#include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 #include "GPU/Common/TextureCacheCommon.h"
 #include "GPU/Common/SoftwareTransformCommon.h"
 #include "GPU/Debugger/Debugger.h"
@@ -83,6 +84,12 @@ void GPUCommon::EndHostFrame() {
 }
 
 void GPUCommon::Reinitialize() {
+	// STV_GE_THREAD_v1: sceKernelModule llama esto con el juego en marcha
+	// (reboot de modulo); el memset de dls[] bajo una pasada en vuelo seria
+	// fatal. La barrera espera al worker y materializa lo pendiente.
+	stvge::Barrera();
+	stvge::CandadoGe candadoGe;
+
 	memset(dls, 0, sizeof(dls));
 	for (int i = 0; i < DisplayListMaxCount; ++i) {
 		dls[i].state = PSP_GE_DL_STATE_NONE;
@@ -146,6 +153,8 @@ void GPUCommon::PopDLQueue() {
 }
 
 bool GPUCommon::BusyDrawing() {
+	// STV_GE_THREAD_v1: candado (recursivo: DrawSync abajo vuelve a tomarlo).
+	stvge::CandadoGe candadoGe;
 	u32 state = DrawSync(1);
 	if (state == PSP_GE_LIST_DRAWING || state == PSP_GE_LIST_STALLING) {
 		if (currentList && currentList->state != PSP_GE_DL_STATE_PAUSED) {
@@ -172,6 +181,16 @@ void GPUCommon::DumpNextFrame() {
 }
 
 u32 GPUCommon::DrawSync(int mode) {
+	// STV_GE_THREAD_v1: la espera al worker va ANTES del candado (esperar con
+	// el candado tomado seria deadlock con la pasada). Con mode=0 el veredicto
+	// depende de drawCompleteTicks, que el worker recalcula al final de la
+	// pasada: se espera worker idle, se drena, y la logica original decide con
+	// el estado final — nunca peor que lo que hoy tarda el inline. mode=1 es
+	// polling: NO se espera (contestar DRAWING mientras el worker corre es la
+	// semantica correcta), solo candado.
+	if (mode == 0)
+		stvge::EsperarGeParaSync();
+	stvge::CandadoGe candadoGe;
 	gpuStats.numDrawSyncs++;
 
 	if (mode < 0 || mode > 1)
@@ -222,6 +241,13 @@ void GPUCommon::CheckDrawSync() {
 }
 
 int GPUCommon::ListSync(int listid, int mode) {
+	// STV_GE_THREAD_v1: mismo esquema que DrawSync — mode=0 espera worker idle
+	// (no "lista completada": una lista stalleada deja al worker idle sin
+	// completarse y ahi el camino original de waitUntilTicks duerme al hilo
+	// emulado, igual que inline) + drenaje, todo antes del candado.
+	if (mode == 0)
+		stvge::EsperarGeParaSync();
+	stvge::CandadoGe candadoGe;
 	gpuStats.numListSyncs++;
 
 	if (listid < 0 || listid >= DisplayListMaxCount)
@@ -268,6 +294,7 @@ int GPUCommon::ListSync(int listid, int mode) {
 }
 
 int GPUCommon::GetStack(int index, u32 stackPtr) {
+	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1: lee currentList->stack bajo candado
 	if (!currentList) {
 		// Seems like it doesn't return an error code?
 		return 0;
@@ -300,6 +327,7 @@ static void CopyMatrix24(u32_le *result, const float *mtx, u32 count, u32 cmdbit
 }
 
 bool GPUCommon::GetMatrix24(GEMatrixType type, u32_le *result, u32 cmdbits) {
+	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1: gstate es del worker durante la pasada
 	switch (type) {
 	case GE_MTX_BONE0:
 	case GE_MTX_BONE1:
@@ -347,6 +375,9 @@ void GPUCommon::ResetMatrices() {
 }
 
 u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<PspGeListArgs> args, bool head, bool *runList) {
+	// STV_GE_THREAD_v1: puro estado (dls[], dlQueue, currentList) — candado y
+	// nada mas; la ejecucion la despacha el caller DESPUES de soltar esto.
+	stvge::CandadoGe candadoGe;
 	*runList = false;
 
 	// TODO Check the stack values in missing arg and ajust the stack depth
@@ -466,6 +497,7 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 }
 
 u32 GPUCommon::DequeueList(int listid) {
+	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
 	if (listid < 0 || listid >= DisplayListMaxCount || dls[listid].state == PSP_GE_DL_STATE_NONE)
 		return SCE_KERNEL_ERROR_INVALID_ID;
 
@@ -488,6 +520,7 @@ u32 GPUCommon::DequeueList(int listid) {
 }
 
 u32 GPUCommon::UpdateStall(int listid, u32 newstall, bool *runList) {
+	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1: dl.stall es el downcount vivo de la pasada
 	*runList = false;
 	if (listid < 0 || listid >= DisplayListMaxCount || dls[listid].state == PSP_GE_DL_STATE_NONE)
 		return SCE_KERNEL_ERROR_INVALID_ID;
@@ -502,6 +535,7 @@ u32 GPUCommon::UpdateStall(int listid, u32 newstall, bool *runList) {
 }
 
 u32 GPUCommon::Continue(bool *runList) {
+	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
 	*runList = false;
 	if (!currentList)
 		return 0;
@@ -543,6 +577,7 @@ u32 GPUCommon::Continue(bool *runList) {
 }
 
 u32 GPUCommon::Break(int mode) {
+	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
 	if (mode < 0 || mode > 1)
 		return SCE_KERNEL_ERROR_INVALID_MODE;
 
@@ -607,6 +642,9 @@ u32 GPUCommon::Break(int mode) {
 }
 
 void GPUCommon::PSPFrame() {
+	// STV_GE_THREAD_v1: lo llama el flip (hleAfterFlip) mientras el worker
+	// puede estar en pasada; immCount_/recorder son territorio GPU.
+	stvge::CandadoGe candadoGe;
 	immCount_ = 0;
 	if (dumpNextFrame_) {
 		NOTICE_LOG(Log::G3D, "DUMPING THIS FRAME");
@@ -674,6 +712,11 @@ void GPUCommon::UpdatePC(u32 currentPC, u32 newPC) {
 }
 
 void GPUCommon::ReapplyGfxState() {
+	// STV_GE_THREAD_v1: reejecuta ops contra gstate. Llega desde el EmuThread
+	// (sceGeRestoreContext, BeginHostFrame, InterruptEnd) y desde el propio
+	// worker (Execute_End restaurando contexto): el candado recursivo cubre
+	// ambos sin refactorizar.
+	stvge::CandadoGe candadoGe;
 	// The commands are embedded in the command memory so we can just reexecute the words. Convenient.
 	// To be safe we pass 0xFFFFFFFF as the diff.
 
@@ -727,7 +770,14 @@ inline void GPUCommon::UpdateState(GPURunState state) {
 // This is now called when coreState == CORE_RUNNING_GE, in addition to from the various sceGe commands.
 DLResult GPUCommon::ProcessDLQueue() {
 	if (!resumingFromDebugBreak_) {
-		startingTicks = CoreTiming::GetTicks();
+		// STV_GE_THREAD_v1: en el worker CoreTiming es territorio ajeno (y su
+		// lectura seria una carrera contra el EmuThread): el startingTicks es
+		// el tick simulado capturado AL POSTEAR la orden RUN, que es el mismo
+		// instante en el que el camino inline habria leido GetTicks(). La
+		// formula atTicks = startingTicks + cyclesExecuted queda intacta.
+		// (resumingFromDebugBreak_ es imposible en el worker: con debugger
+		// activo el dispatch degrada a inline.)
+		startingTicks = stvge::EnWorker() ? stvge::TickDeLaOrden() : CoreTiming::GetTicks();
 		cyclesExecuted = 0;
 
 		// ?? Seems to be correct behaviour to process the list anyway?
@@ -1445,6 +1495,12 @@ struct DisplayList_v2 {
 };
 
 void GPUCommon::DoState(PointerWrap &p) {
+	// STV_GE_THREAD_v1: un savestate jamas corre con el worker activo. La
+	// barrera espera la pasada y materializa las terminaciones pendientes, asi
+	// lo serializado (dls[], gpuState, ticks) es un estado en reposo y
+	// completo. Cubre a todos los callers (el unico real es __DisplayDoState).
+	stvge::Barrera();
+	stvge::CandadoGe candadoGe;
 	auto s = p.Section("GPUCommon", 1, 6);
 	if (!s)
 		return;
@@ -1527,10 +1583,14 @@ void GPUCommon::DoState(PointerWrap &p) {
 }
 
 void GPUCommon::InterruptStart(int listid) {
+	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
 	interruptRunning = true;
 }
 
 void GPUCommon::InterruptEnd(int listid) {
+	// STV_GE_THREAD_v1: toca dls[], la cola y puede restaurar contexto
+	// (gstate.Restore + ReapplyGfxState) mientras el worker corre otra lista.
+	stvge::CandadoGe candadoGe;
 	interruptRunning = false;
 	isbreak = false;
 
@@ -1557,6 +1617,7 @@ void GPUCommon::InterruptEnd(int listid) {
 
 // TODO: Maybe cleaner to keep this in GE and trigger the clear directly?
 void GPUCommon::SyncEnd(GPUSyncType waitType, int listid, bool wokeThreads) {
+	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1: barre estados de dls[] desde el evento sync
 	if (waitType == GPU_SYNC_DRAW && wokeThreads)
 	{
 		for (int i = 0; i < DisplayListMaxCount; ++i) {
@@ -1913,6 +1974,12 @@ void GPUCommon::DoBlockTransfer(u32 skipDrawReason) {
 }
 
 bool GPUCommon::PerformMemoryCopy(u32 dest, u32 src, int size, GPUCopyFlag flags) {
+	// STV_GE_THREAD_v1: las notificaciones de memoria (sceDmac, memset del
+	// kernel, video) consultan y mutan el framebuffer manager desde el
+	// EmuThread; el plano no las listo pero son entradas a territorio GPU
+	// igual que las syscalls sceGe — mismo candado (idem los tres Perform de
+	// abajo; Readback/WriteColor delegan en este).
+	stvge::CandadoGe candadoGe;
 	if (size == 0) {
 		_dbg_assert_msg_(false, "Zero-sized PerformMemoryCopy: %08x -> %08x, size %d (flag: %d)", src, dest, size, (int)flags);
 		return false;
@@ -1958,6 +2025,7 @@ bool GPUCommon::PerformMemoryCopy(u32 dest, u32 src, int size, GPUCopyFlag flags
 }
 
 bool GPUCommon::PerformMemorySet(u32 dest, u8 v, int size) {
+	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
 	if (size == 0) {
 		_dbg_assert_msg_(false, "Zero-sized PerformMemorySet: %08x, value %02x, size %d", dest, v, size);
 		return false;
@@ -2007,6 +2075,7 @@ bool GPUCommon::PerformWriteColorFromMemory(u32 dest, int size) {
 }
 
 void GPUCommon::PerformWriteFormattedFromMemory(u32 addr, int size, int frameWidth, GEBufferFormat format) {
+	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
 	if (Memory::IsVRAMAddress(addr)) {
 		framebufferManager_->PerformWriteFormattedFromMemory(addr, size, frameWidth, format);
 	}
@@ -2015,6 +2084,7 @@ void GPUCommon::PerformWriteFormattedFromMemory(u32 addr, int size, int frameWid
 }
 
 bool GPUCommon::PerformWriteStencilFromMemory(u32 dest, int size, WriteStencil flags) {
+	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
 	if (framebufferManager_->MayIntersectFramebufferColor(dest)) {
 		framebufferManager_->PerformWriteStencilFromMemory(dest, size, flags);
 		return true;

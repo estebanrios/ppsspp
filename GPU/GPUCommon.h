@@ -117,6 +117,17 @@ public:
 	// For example, a debugger is active.
 	bool ShouldSplitOverGe() const;
 
+	// STV_GE_THREAD_v1: true si alguna facilidad de debug exige ejecutar las
+	// listas inline en el EmuThread (SlowRunLoop, recorder y el dump de cuadro
+	// notifican maquinaria de afinidad EmuThread). Es la condicion de degrade
+	// automatico del worker: cubre lo mismo que decide useFastRunLoop_ en
+	// ProcessDLQueue, para que una pasada despachada al worker jamas caiga en
+	// el interprete lento.
+	bool StvGeExigeInline() const {
+		return dumpThisFrame_ || dumpNextFrame_ || recorder_.IsActive() ||
+			NeedsSlowInterpreter() || breakpoints_.HasBreakpoints();
+	}
+
 	uint32_t SetAddrTranslation(uint32_t value) override;
 	uint32_t GetAddrTranslation() override;
 
