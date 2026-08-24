@@ -2,6 +2,7 @@
 #include "Common/Data/Convert/ColorConv.h"
 #include "GPU/Common/VertexDecoderCommon.h"
 #include "GPU/GPUState.h"
+#include "GPU/Common/StvPrefetch.h"
 
 #include "Common/Math/SIMDHeaders.h"
 
@@ -89,16 +90,46 @@ void VtxDec_Tu16_C8888_Pfloat(const u8 *srcp, u8 *dstp, int count, const UVScale
 	float32x2_t uvScale = vmul_f32(vld1_f32(&uvScaleOffset->uScale), vdup_n_f32(1.0f / 32768.0f));
 	float32x2_t uvOff = vld1_f32(&uvScaleOffset->uOff);
 	uint32x4_t alphaMask = vdupq_n_u32(0xFFFFFFFF);
-	for (int i = 0; i < count; i++) {
-		uint16x4_t uv = vld1_u16(&src[i].u);  // TODO: We only need the first two lanes, maybe there's a better way?
-		uint32x2_t fuv = vget_low_u32(vmovl_u16(uv));  // Only using the first two lanes
-		float32x2_t finalUV = vadd_f32(vmul_f32(vcvt_f32_u32(fuv), uvScale), uvOff);
-		u32 normal = src[i].packed_normal;
-		uint32x4_t colpos = vld1q_u32((const u32 *)&src[i].col);
-		alphaMask = vandq_u32(alphaMask, colpos);
-		vst1_f32(&dst[i].u, finalUV);
-		dst[i].packed_normal = normal;
-		vst1q_u32(&dst[i].col, colpos);
+	// --- STV(prf): PREFETCH DEL VERTICE QUE VIENE ---------------------------
+	// ESTE es el decodificador de God of War, y NO pasa por el JIT:
+	// VertexDecoderCommon.cpp:1429 lo elige antes de mirar el jitCache ("Can
+	// skip looking up in the JIT"), y la compuerta expand8BitNormalsToFloat esta
+	// abierta en Vulkan (DrawEngineVulkan.cpp:56). El comentario de upstream, 90
+	// lineas mas arriba, lo dice: "(5%+ of God of War execution)".
+	//
+	// El lazo esta ESCRITO DOS VECES a proposito: con el interruptor apagado el
+	// codigo generado es el de upstream instruccion por instruccion, sin una
+	// rama de mas. Un A/B cuyo brazo de control no es el control no mide nada.
+	// La distancia se resuelve en COMPILACION (sizeof de la struct de entrada),
+	// asi que el prefetch sale con offset inmediato y sin un ADD.
+	constexpr int kStvPf = stvprf::DistanciaVertices((int)sizeof(GOWVTX));
+	if (stvprf::Dec()) {
+		stvprf::g_hwCon++;
+		for (int i = 0; i < count; i++) {
+			__builtin_prefetch((const char *)(src + i) + kStvPf);
+			uint16x4_t uv = vld1_u16(&src[i].u);  // TODO: We only need the first two lanes, maybe there's a better way?
+			uint32x2_t fuv = vget_low_u32(vmovl_u16(uv));  // Only using the first two lanes
+			float32x2_t finalUV = vadd_f32(vmul_f32(vcvt_f32_u32(fuv), uvScale), uvOff);
+			u32 normal = src[i].packed_normal;
+			uint32x4_t colpos = vld1q_u32((const u32 *)&src[i].col);
+			alphaMask = vandq_u32(alphaMask, colpos);
+			vst1_f32(&dst[i].u, finalUV);
+			dst[i].packed_normal = normal;
+			vst1q_u32(&dst[i].col, colpos);
+		}
+	} else {
+		stvprf::g_hwSin++;
+		for (int i = 0; i < count; i++) {
+			uint16x4_t uv = vld1_u16(&src[i].u);  // TODO: We only need the first two lanes, maybe there's a better way?
+			uint32x2_t fuv = vget_low_u32(vmovl_u16(uv));  // Only using the first two lanes
+			float32x2_t finalUV = vadd_f32(vmul_f32(vcvt_f32_u32(fuv), uvScale), uvOff);
+			u32 normal = src[i].packed_normal;
+			uint32x4_t colpos = vld1q_u32((const u32 *)&src[i].col);
+			alphaMask = vandq_u32(alphaMask, colpos);
+			vst1_f32(&dst[i].u, finalUV);
+			dst[i].packed_normal = normal;
+			vst1q_u32(&dst[i].col, colpos);
+		}
 	}
 	alpha = vgetq_lane_u32(alphaMask, 0);
 #else

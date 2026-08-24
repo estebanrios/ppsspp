@@ -1839,6 +1839,25 @@ void ARM64XEmitter::LDRSW(IndexType type, ARM64Reg Rt, ARM64Reg Rn, s32 imm)
 		EncodeLoadStoreIndexedInst(0x2E2,
 				type == INDEX_POST ? 1 : 3, Rt, Rn, imm);
 }
+// STV(prf): PRFM (immediate, unsigned offset). 0x3E6 = size=0b11, 111, V=0,
+// unsigned-offset, opc=0b10; escalado por 8 (de ahi el `64`). Verificado
+// contra el ensamblador del NDK que compila esta imagen:
+//   prfm pldl1keep, [x0, #40]   ==  0xF9801400  ==  (0x3E6<<22)|((40/8)<<10)
+//   prfm pldl2keep, [x1, #128]  ==  0xF9804022
+// El prfop viaja en el campo Rt; todos los prfop valen <32, asi que Is64Bit()
+// e IsVector() dan false y DecodeReg() los deja intactos: el helper generico
+// los codifica bien sin tocarlo.
+void ARM64XEmitter::PRFM(IndexType type, ARM64Reg Rt, ARM64Reg Rn, s32 imm)
+{
+	_assert_msg_(type == INDEX_UNSIGNED, "PRFM: solo INDEX_UNSIGNED");
+	// Guarda que NO depende de _assert_msg_ (que en release puede desaparecer):
+	// antes que escribir una instruccion mal codificada en el flujo, no escribir
+	// nada. Por construccion los llamadores de este parche nunca caen aca
+	// (stvprf::DistanciaVertices ya devuelve multiplo de 8 en 8..32760).
+	if (type != INDEX_UNSIGNED || imm < 0 || (imm & 7) != 0 || imm > 32760)
+		return;
+	EncodeLoadStoreIndexedInst(0x3E6, Rt, Rn, imm, 64);
+}
 
 // Load/Store register (register offset)
 void ARM64XEmitter::STRB(ARM64Reg Rt, ARM64Reg Rn, const ArithOption &Rm)

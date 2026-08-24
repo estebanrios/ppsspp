@@ -25,6 +25,7 @@
 #include "Core/MIPS/JitCommon/JitCommon.h"
 #include "GPU/GPUState.h"
 #include "GPU/Common/VertexDecoderCommon.h"
+#include "GPU/Common/StvPrefetch.h"
 
 alignas(16) static float bones[16 * 8];  // First four are kept in registers
 
@@ -249,6 +250,32 @@ JittedVertexDecoder VertexDecoderJitCache::Compile(const VertexDecoder &dec, int
 	}
 
 	const u8 *loopStart = NopAlignCode16();
+
+	// --- STV(prf): PREFETCH DEL VERTICE QUE VIENE ---------------------------
+	// El A55 es in-order: una carga que falla para el pipeline entero. Aca el
+	// patron es el mas facil que existe —srcReg avanza dec.VertexSize() por
+	// vuelta (ver el ADDI2R del pie del lazo)— asi que el stride es CONSTANTE y
+	// se conoce EN TIEMPO DE JIT. Una instruccion, sin registro extra, sin rama:
+	// el offset inmediato reusa el mismo srcReg que los pasos ya van a usar.
+	//
+	// Esto se emite UNA VEZ por decodificador compilado; lo que corre por
+	// vertice es la instruccion emitida. Por eso el interruptor en caliente
+	// controla la EMISION y no la ejecucion: prender/apagar tira los
+	// decodificadores ya compilados por el camino de upstream
+	// (GPUCommonHW::CheckConfigChanged -> DrawEngineCommon::NotifyConfigChanged).
+	//
+	// Pasarse del final del buffer de vertices es INOCUO: PRFM es un hint, no
+	// puede fallar ni con la direccion sin mapear.
+	const int stvDist = stvprf::Dec() ? stvprf::DistanciaVertices(dec.VertexSize()) : 0;
+	if (stvDist) {
+		PRFM(INDEX_UNSIGNED, PLDL1KEEP, srcReg, stvDist);
+		stvprf::g_decCon++;
+		stvprf::g_ultStride = (uint32_t)dec.VertexSize();
+		stvprf::g_ultDist = (uint32_t)stvDist;
+	} else {
+		stvprf::g_decSin++;
+	}
+
 	for (int i = 0; i < dec.numSteps_; i++) {
 		if (!CompileStep(dec, i)) {
 			EndWrite();

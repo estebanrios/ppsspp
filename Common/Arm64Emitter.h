@@ -679,6 +679,12 @@ public:
 	void STR(IndexType type, ARM64Reg Rt, ARM64Reg Rn, s32 imm);
 	void LDR(IndexType type, ARM64Reg Rt, ARM64Reg Rn, s32 imm);
 	void LDRSW(IndexType type, ARM64Reg Rt, ARM64Reg Rn, s32 imm);
+	// STV(prf): `PRFM <prfop>, [Xn, #pimm]` — forma INMEDIATA con offset sin
+	// signo. Upstream solo trae la literal (PC-relativa, :642) y la de registro
+	// (:693); falta justo la que sirve en un lazo con base fija. `Rt` lleva el
+	// prfop (PLDL1KEEP y compania, en el enum de arriba). `imm` en BYTES: multiplo
+	// de 8, 0..32760. Solo INDEX_UNSIGNED. Ver tools/ppsspp/parches/prefetch-a55.sh.
+	void PRFM(IndexType type, ARM64Reg Rt, ARM64Reg Rn, s32 imm);
 
 	// Load/Store register (register offset)
 	void STRB(ARM64Reg Rt, ARM64Reg Rn, const ArithOption &Rm);

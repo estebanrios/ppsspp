@@ -79,6 +79,12 @@ public:
 	typedef void (GPUCommonHW::*CmdFunc)(u32 op, u32 diff);
 
 	void FastRunLoop(DisplayList &list) override;
+	// STV(prf): el lazo de verdad, en DOS instanciaciones. Con STV_PRF=false el
+	// `if constexpr` borra el prefetch en compilacion y el codigo generado no se
+	// distingue del de upstream — que es lo que hace honesto el brazo APAGADO
+	// del A/B. FastRunLoop queda como despachador: una lectura de global y una
+	// rama POR LISTA, no por comando.
+	template <bool STV_PRF> void StvFastRunLoop(DisplayList &list);
 	void ExecuteOp(u32 op, u32 diff) override;
 
 	bool PresentedThisFrame() const override;

@@ -9,6 +9,7 @@
 #include "Core/Util/PPGeDraw.h"
 
 #include "GPU/GPUCommonHW.h"
+#include "GPU/Common/StvPrefetch.h"
 #include "GPU/Common/SplineCommon.h"
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/TextureCacheCommon.h"
@@ -406,6 +407,23 @@ GPUCommonHW::~GPUCommonHW() {
 // Called once per frame. Might also get called during the pause screen
 // if "transparent".
 void GPUCommonHW::CheckConfigChanged(const DisplayLayoutConfig &config) {
+	// --- STV(prf): interruptor en caliente de los PRFM -----------------------
+	// PorCuadro() re-lee debug.stv.prf cada 32 cuadros y devuelve true si
+	// cambio la parte que afecta a los DECODIFICADORES DE VERTICES. Ahi hay que
+	// tirar los decodificadores ya compilados: el PRFM del decodificador JIT se
+	// emite UNA VEZ, al compilar, y el codigo ya emitido no se re-emite.
+	//
+	// No se inventa un vaciado nuevo: se pide EL DE UPSTREAM, el mismo que corre
+	// cuando el usuario cambia un ajuste con el juego andando
+	// (configChanged_ -> drawEngineCommon_->NotifyConfigChanged(), que hace
+	// decJitCache_->Clear() y borra decoderMap_). Punto seguro garantizado por
+	// upstream, no por nosotros.
+	//
+	// El flip cuesta un tiron (recompilar decodificadores + ClearCacheNextFrame):
+	// hay que dejar pasar unos segundos antes de medir el brazo nuevo.
+	if (stvprf::PorCuadro())
+		configChanged_ = true;
+
 	if (configChanged_) {
 		ClearCacheNextFrame();
 		gstate_c.SetUseFlags(CheckGPUFeatures());
@@ -834,7 +852,19 @@ void GPUCommonHW::ExecuteOp(u32 op, u32 diff) {
 	}
 }
 
+// STV(prf): despachador. El gate se lee UNA VEZ POR LISTA — no por comando.
 void GPUCommonHW::FastRunLoop(DisplayList &list) {
+	if (stvprf::Lista()) {
+		stvprf::g_lstCon++;
+		StvFastRunLoop<true>(list);
+	} else {
+		stvprf::g_lstSin++;
+		StvFastRunLoop<false>(list);
+	}
+}
+
+template <bool STV_PRF>
+void GPUCommonHW::StvFastRunLoop(DisplayList &list) {
 	PROFILE_THIS_SCOPE("gpuloop");
 
 	if (!Memory::IsValidAddress(list.pc)) {
@@ -848,6 +878,28 @@ void GPUCommonHW::FastRunLoop(DisplayList &list) {
 	for (; dc > 0; --dc) {
 		// We know that display list PCs have the upper nibble == 0 - no need to mask the pointer
 		const u32 op = *(const u32_le *)(Memory::base + list.pc);
+		// --- STV(prf): la display list es SECUENCIAL -------------------------
+		// Se recorre de a 4 B hacia adelante: 16 comandos por linea de 64 B. El
+		// prefetcher de hardware del A55 solo cubre secuencial simple y sin
+		// profundidad; esto pide dos lineas por delante.
+		//
+		// SIN COMPUERTA 1-DE-N, y no por descuido. COSTO MEDIDO por objdump
+		// diferencial (mismo clang, mismas banderas): **+2 instrucciones por
+		// comando**. clang cambia el `ldr w21, [x9, w8, uxtw]` de upstream por
+		//     add  x8, x9, w8, uxtw
+		//     ldr  w21, [x8], #0x80      <- el +128 viaja GRATIS en el post-index
+		//     prfm pldl1keep, [x8]
+		// o sea un ADD para materializar el puntero y el PRFM. Una compuerta
+		// 1-de-16 costaria un TST mas un salto condicional EN EL CAMINO COMUN
+		// (2 instrucciones, mas presion de predictor y un fallo cada 16 vueltas)
+		// y ademas necesitaria igual el ADD adentro: sale igual o mas cara que
+		// lo que apaga. Y los 15 prefetch redundantes aciertan en L1: gastan una
+		// ranura de emision, no un acceso a memoria.
+		//
+		// Pasarse del final de la lista es INOCUO: PRFM es un hint y no falla.
+		if constexpr (STV_PRF) {
+			__builtin_prefetch(Memory::base + list.pc + stvprf::kBytesLista);
+		}
 		const u32 cmd = op >> 24;
 		const CommandInfo &info = cmdInfo[cmd];
 		const u32 diff = op ^ gstate.cmdmem[cmd];
