@@ -1441,7 +1441,14 @@ bool VulkanContext::InitSwapchain(VkPresentModeKHR desiredPresentMode) {
 
 	uint32_t allowedRotations = VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR;
 	// Hack: Don't allow 270 degrees pretransform (inverse landscape), it creates bizarre issues on some devices (see #15773).
-	allowedRotations &= ~VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR;
+	// STV: veto de 270 SOLO fuera de Mali. El issue #15773 se vio en PowerVR y
+	// en Adreno, nunca en Mali, y en el TG5050 (Mali-G57 MC1) el rechazo obliga a
+	// SurfaceFlinger a componer la ventana con la GPU en todos los cuadros.
+	if (physicalDeviceProperties_[physical_device_].properties.vendorID != VULKAN_VENDOR_ARM) {
+		allowedRotations &= ~VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR;
+	} else {
+		INFO_LOG(Log::G3D, "STV: pretransform 270 habilitado (GPU ARM/Mali)");
+	}
 
 	if (surfCapabilities_.currentTransform & (VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR | VK_SURFACE_TRANSFORM_INHERIT_BIT_KHR)) {
 		preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
