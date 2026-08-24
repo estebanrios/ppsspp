@@ -116,6 +116,7 @@
 #include "Core/TiltEventProcessor.h"
 
 #include "GPU/GPUCommon.h"
+#include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 #include "GPU/Common/PresentationCommon.h"
 #include "UI/AudioCommon.h"
 #include "UI/Background.h"
@@ -856,6 +857,10 @@ bool NativeInitGraphics(GraphicsContext *graphicsContext) {
 	if (gpu) {
 		PSP_CoreParameter().pixelWidth = g_display.pixel_xres;
 		PSP_CoreParameter().pixelHeight = g_display.pixel_yres;
+		// STV_GE_THREAD_v1: formalidad simetrica al DeviceLost — el worker no
+		// puede tener pasada en vuelo con los graficos caidos, pero si la
+		// hubiera, restaurar el contexto abajo suyo seria fatal.
+		stvge::EsperarIdle();
 		gpu->DeviceRestore(g_draw);
 	}
 
@@ -923,6 +928,12 @@ void NativeShutdownGraphics() {
 	g_iconCache.ClearTextures();
 
 	// TODO: This is not really necessary with Vulkan on Android - could keep shaders etc in memory
+	// STV_GE_THREAD_v1: esto puede llegar desde el hilo grafico del host con
+	// una pasada del worker en vuelo (superficie perdida en pleno juego): sin
+	// esta espera, DeviceLost desarma el draw context abajo del worker. Solo
+	// espera idle — NO drena: el drenaje toca CoreTiming y eso es exclusivo
+	// del EmuThread; las terminaciones quedan encoladas para cuando vuelva.
+	stvge::EsperarIdle();
 	if (gpu)
 		gpu->DeviceLost();
 

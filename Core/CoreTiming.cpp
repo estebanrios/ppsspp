@@ -29,6 +29,7 @@
 #include "Common/Serialize/SerializeList.h"
 #include "Core/CoreTiming.h"
 #include "Core/Core.h"
+#include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 #include "Core/Config.h"
 #include "Core/HLE/sceKernelThread.h"
 #include "Core/MIPS/MIPS.h"
@@ -392,6 +393,16 @@ void ForceCheck()
 
 void Advance() {
 	PROFILE_THIS_SCOPE("advance");
+	// STV_GE_THREAD_v1: drenaje de respaldo del hilo del GE. Advance es el
+	// punto que el mainloop de CPU pisa en cada slice (y que las syscalls
+	// sceGe fuerzan via hleCoreTimingForceCheck justo despues de encolar), asi
+	// que una terminacion posteada por el worker se materializa aca con
+	// latencia de un slice — y ANTES de ProcessEvents, para que un evento
+	// agendado con tick ya vencido dispare en esta misma vuelta. Con el worker
+	// apagado el costo es UN load relaxed de un bool que nadie escribe.
+	if (stvge::HayTerminaciones())
+		stvge::Drenar();
+
 	int cyclesExecuted = slicelength - currentMIPS->downcount;
 	globalTimer += cyclesExecuted;
 	currentMIPS->downcount = slicelength;

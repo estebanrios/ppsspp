@@ -62,6 +62,7 @@ using namespace std::placeholders;
 #include "GPU/Common/PresentationCommon.h"
 #include "GPU/GPUState.h"
 #include "GPU/GPUCommon.h"
+#include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 #include "Core/MIPS/MIPS.h"
 #include "Core/HLE/sceCtrl.h"
 #include "Core/HLE/sceSas.h"
@@ -1755,6 +1756,10 @@ ScreenRenderFlags EmuScreen::RunEmulation(bool skipBufferEffects) {
 		SaveState::Process();
 
 		if (gpu) {
+			// STV_GE_THREAD_v1: candado sobre la cadena BeginHostFrame entera
+			// (la subclase agrega trabajo despues de la base), por si el
+			// worker sigue masticando la cola del cuadro anterior.
+			stvge::CandadoGe candadoGe;
 			gpu->BeginHostFrame(displayLayoutConfig);
 		}
 
@@ -1811,6 +1816,8 @@ ScreenRenderFlags EmuScreen::RunEmulation(bool skipBufferEffects) {
 		}
 
 		if (gpu) {
+			// STV_GE_THREAD_v1: idem BeginHostFrame para la cadena EndHostFrame.
+			stvge::CandadoGe candadoGe;
 			// Run post processing and other passes.
 			gpu->PrepareCopyDisplayToOutput(displayLayoutConfig);
 			gpu->EndHostFrame();

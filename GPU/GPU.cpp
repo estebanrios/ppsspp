@@ -24,6 +24,7 @@
 
 #include "GPU/GPU.h"
 #include "GPU/GPUCommon.h"
+#include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 
 #if PPSSPP_API(ANY_GL)
 #include "GPU/GLES/GPU_GLES.h"
@@ -91,6 +92,10 @@ bool GPU_Init(GPUCore gpuCore, GraphicsContext *ctx, Draw::DrawContext *draw) {
 #endif
 
 void GPU_Shutdown() {
+	// STV_GE_THREAD_v1: el worker corre sobre el objeto gpu — join ANTES de
+	// borrarlo. Tambien descarta terminaciones sin drenar (la PSP muere, ya no
+	// hay a quien despertar) y deja el nivel en 0 para el proximo boot.
+	stvge::Apagar();
 	delete gpu;
 	gpu = nullptr;
 	gpuDebug = nullptr;

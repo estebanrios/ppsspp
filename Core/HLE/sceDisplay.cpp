@@ -56,6 +56,7 @@
 #include "Core/ControlMapper.h"
 
 #include "GPU/GPU.h"
+#include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 #include "GPU/GPUState.h"
 #include "GPU/GPUCommon.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
@@ -512,6 +513,12 @@ static void DoFrameIdleTiming() {
 }
 
 void hleEnterVblank(u64 userdata, int cyclesLate) {
+	// STV_GE_THREAD_v1: el latido del hilo del GE, una vez por vblank: relee
+	// la prop debug.stv.ge, drena terminaciones pendientes y conmuta de nivel
+	// si el worker esta idle. Va ANTES del interrupt de vblank para que las
+	// terminaciones del cuadro queden agendadas antes de despertar al juego.
+	stvge::PorVblank();
+
 	int vbCount = userdata;
 
 	VERBOSE_LOG(Log::sceDisplay, "Enter VBlank %i", vbCount);
@@ -694,6 +701,10 @@ void __DisplayFlip(int cyclesLate) {
 		skipFrame = false;
 	}
 
+	// STV_GE_THREAD_v1: skipDrawReason lo lee el worker en cada draw/flush;
+	// el flip lo muta aca — bajo candado para que el cambio de veredicto de
+	// frameskip no parta una pasada al medio.
+	stvge::CandadoGe candadoGe;
 	if (skipFrame) {
 		// Tell the emulated GPU to skip the next frame.
 		gstate_c.skipDrawReason |= SKIPDRAW_SKIPFRAME;

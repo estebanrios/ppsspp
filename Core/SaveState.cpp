@@ -35,6 +35,7 @@
 #include "Common/TimeUtil.h"
 
 #include "Core/SaveState.h"
+#include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 #include "Core/Config.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
@@ -134,6 +135,16 @@ int g_screenshotFailures;
 	// when in-game it's just not an issue.
 
 	void SaveStart::DoState(PointerWrap &p) {
+		// STV_GE_THREAD_v1: la frontera del worker tiene que cruzarse ANTES de
+		// serializar NADA: CoreTiming::DoState corre mas abajo en esta misma
+		// funcion, ANTES que la seccion del GPU — si la barrera viviera solo
+		// en GPUCommon::DoState, los eventos que el drenaje agenda llegarian
+		// tarde y quedarian FUERA del archivo (lista que jamas completa al
+		// cargar). Aca cubre save, load, rewind y freeze-frame por igual; la
+		// barrera de GPUCommon::DoState queda como red para callers ajenos a
+		// este archivo.
+		stvge::Barrera();
+
 		auto s = p.Section("SaveStart", 1, 3);
 		if (!s)
 			return;
