@@ -14,6 +14,7 @@
 #include "GPU/GeDisasm.h"
 #include "GPU/GPU.h"
 #include "GPU/GPUCommon.h"
+#include "GPU/Common/StvDiagBloques.h"
 #include "GPU/GPUState.h"
 #include "Core/Config.h"
 #include "Core/Core.h"
@@ -1700,6 +1701,8 @@ void GPUCommon::SetCmdValue(u32 op) {
 }
 
 void GPUCommon::DoBlockTransfer(u32 skipDrawReason) {
+	stvblq::Evento stvEv;   // STV(blq): t_total arranca aca
+	stvblq::Inicio(stvEv);
 	u32 srcBasePtr = gstate.getTransferSrcAddress();
 	u32 srcStride = gstate.getTransferSrcStride();
 
@@ -1739,17 +1742,34 @@ void GPUCommon::DoBlockTransfer(u32 skipDrawReason) {
 	bool srcWraps = Memory::IsVRAMAddress(srcBasePtr) && !srcValid;
 	bool dstWraps = Memory::IsVRAMAddress(dstBasePtr) && !dstValid;
 
+	// STV(blq): forma y clase origen->destino, con las direcciones EFECTIVAS.
+	stvblq::AnotarForma(stvEv, width, height, bpp, srcStride, dstStride, src, dst,
+	                    Memory::IsVRAMAddress(srcBasePtr), Memory::IsVRAMAddress(dstBasePtr));
+
 	char tag[128];
 	size_t tagSize = 0;
 
 	// Tell the framebuffer manager to take action if possible. If it does the entire thing, let's just return.
-	if (!framebufferManager_ || !framebufferManager_->NotifyBlockTransferBefore(dstBasePtr, dstStride, dstX, dstY, srcBasePtr, srcStride, srcX, srcY, width, height, bpp, skipDrawReason)) {
+	// STV(blq): MISMO cortocircuito que upstream (sin gestor -> se entra igual),
+	// abierto solo para cronometrar NotifyBlockTransferBefore por separado y
+	// saber si la transferencia la resolvio el gestor de framebuffers.
+	bool stvGestorLoHizo = false;
+	if (!framebufferManager_) {
+		stvblq::g_sinGestor++;
+	} else {
+		const uint64_t stvTn = stvblq::Marca(stvEv);
+		stvGestorLoHizo = framebufferManager_->NotifyBlockTransferBefore(dstBasePtr, dstStride, dstX, dstY, srcBasePtr, srcStride, srcX, srcY, width, height, bpp, skipDrawReason);
+		stvEv.tNotify = stvblq::Marca(stvEv) - stvTn;
+	}
+	if (!stvGestorLoHizo) {
+		stvEv.tCopia = stvblq::Marca(stvEv);   // STV(blq): abre t_copia
 		// Do the copy! (Hm, if we detect a drawn video frame (see below) then we could maybe skip this?)
 		// Can use GetPointerUnchecked because we checked the addresses above. We could also avoid them
 		// entirely by walking a couple of pointers...
 
 		// Simple case: just a straight copy, no overlap or wrapping.
 		if (srcStride == dstStride && (u32)width == srcStride && !srcDstOverlap && srcValid && dstValid) {
+			stvEv.camino = stvblq::CAM_MEMCPY_CONTIGUO;   // STV(blq)
 			u32 srcLineStartAddr = srcBasePtr + (srcY * srcStride + srcX) * bpp;
 			u32 dstLineStartAddr = dstBasePtr + (dstY * dstStride + dstX) * bpp;
 			u32 bytesToCopy = width * height * bpp;
@@ -1758,15 +1778,20 @@ void GPUCommon::DoBlockTransfer(u32 skipDrawReason) {
 			u8 *dstp = Memory::GetPointerWrite(dstLineStartAddr);
 			memcpy(dstp, srcp, bytesToCopy);
 
-			if (MemBlockInfoDetailed(bytesToCopy)) {
+			// STV(blq): mismo predicado, evaluado UNA vez, para poder anotarlo.
+			const bool stvDet = MemBlockInfoDetailed(bytesToCopy);
+			stvblq::Detallado(stvEv, stvDet);
+			if (stvDet) {
 				NotifyMemInfoCopy(dst, src, bytesToCopy, "GPUBlockTransfer/");
 			}
 		} else if ((srcDstOverlap || srcWraps || dstWraps) && (srcValid || srcWraps) && (dstValid || dstWraps)) {
 			// This path means we have either src/dst overlap, OR one or both of src and dst wrap.
 			// This should be uncommon so it's the slowest path.
+			stvEv.camino = stvblq::CAM_SOLAPE64;   // STV(blq)
 			u32 bytesToCopy = width * bpp;
 			bool notifyDetail = MemBlockInfoDetailed(srcWraps || dstWraps ? 64 : bytesToCopy);
 			bool notifyAll = !notifyDetail && MemBlockInfoDetailed(srcSize, dstSize);
+			stvblq::Detallado(stvEv, notifyDetail || notifyAll);   // STV(blq)
 			if (notifyDetail || notifyAll) {
 				tagSize = FormatMemWriteTagAt(tag, sizeof(tag), "GPUBlockTransfer/", src, srcSize);
 			}
@@ -1865,9 +1890,11 @@ void GPUCommon::DoBlockTransfer(u32 skipDrawReason) {
 				}
 			}
 		} else if (srcValid && dstValid) {
+			stvEv.camino = stvblq::CAM_POR_LINEA;   // STV(blq)
 			u32 bytesToCopy = width * bpp;
 			bool notifyDetail = MemBlockInfoDetailed(bytesToCopy);
 			bool notifyAll = !notifyDetail && MemBlockInfoDetailed(srcSize, dstSize);
+			stvblq::Detallado(stvEv, notifyDetail || notifyAll);   // STV(blq)
 			if (notifyDetail || notifyAll) {
 				tagSize = FormatMemWriteTagAt(tag, sizeof(tag), "GPUBlockTransfer/", src, srcSize);
 			}
@@ -1892,11 +1919,15 @@ void GPUCommon::DoBlockTransfer(u32 skipDrawReason) {
 				NotifyMemInfo(MemBlockFlags::WRITE, dst, dstSize, tag, tagSize);
 			}
 		} else {
+			stvEv.camino = stvblq::CAM_INVALIDO;   // STV(blq)
 			// This seems to cause the GE to require a break/reset on a PSP.
 			// TODO: Handle that and figure out which bytes are still copied?
 			ERROR_LOG_REPORT_ONCE(invalidtransfer, Log::G3D, "Block transfer invalid: %08x/%x -> %08x/%x, %ix%ix%i (%i,%i)->(%i,%i)", srcBasePtr, srcStride, dstBasePtr, dstStride, width, height, bpp, srcX, srcY, dstX, dstY);
 		}
 
+		// STV(blq): cierra t_copia. Invalidate + NotifyBlockTransferAfter quedan
+		// FUERA de t_copia (y dentro de t_total), que es lo que corresponde.
+		stvEv.tCopia = stvblq::Marca(stvEv) - stvEv.tCopia;
 		if (framebufferManager_) {
 			// Fixes Gran Turismo's funky text issue, since it overwrites the current texture.
 			textureCache_->Invalidate(dstBasePtr + (dstY * dstStride + dstX) * bpp, height * dstStride * bpp, GPU_INVALIDATE_HINT);
@@ -1904,11 +1935,16 @@ void GPUCommon::DoBlockTransfer(u32 skipDrawReason) {
 		}
 	}
 
+	// STV(blq): fin del evento. Si el gestor lo resolvio, ese ES el camino.
+	if (stvGestorLoHizo) stvEv.camino = stvblq::CAM_GESTOR;
+	stvblq::Registrar(stvEv);
+
 	// TODO: Correct timing appears to be 1.9, but erring a bit low since some of our other timing is inaccurate.
 	cyclesExecuted += ((height * width * bpp) * 16) / 10;
 }
 
 bool GPUCommon::PerformMemoryCopy(u32 dest, u32 src, int size, GPUCopyFlag flags) {
+	stvblq::g_memcpyGE++;   // STV(blq): solo cuenta, para acotar el otro memcpy del GE
 	if (size == 0) {
 		_dbg_assert_msg_(false, "Zero-sized PerformMemoryCopy: %08x -> %08x, size %d (flag: %d)", src, dest, size, (int)flags);
 		return false;
@@ -1954,6 +1990,7 @@ bool GPUCommon::PerformMemoryCopy(u32 dest, u32 src, int size, GPUCopyFlag flags
 }
 
 bool GPUCommon::PerformMemorySet(u32 dest, u8 v, int size) {
+	stvblq::g_memsetGE++;   // STV(blq): solo cuenta
 	if (size == 0) {
 		_dbg_assert_msg_(false, "Zero-sized PerformMemorySet: %08x, value %02x, size %d", dest, v, size);
 		return false;

@@ -37,6 +37,8 @@
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/ShaderUniforms.h"
 #include "GPU/Vulkan/DrawEngineVulkan.h"
+#include "Core/Config.h"
+#include "GPU/Common/StvDiagBloques.h"
 #include "GPU/Vulkan/TextureCacheVulkan.h"
 #include "GPU/Vulkan/ShaderManagerVulkan.h"
 #include "GPU/Vulkan/PipelineManagerVulkan.h"
@@ -154,6 +156,10 @@ void DrawEngineVulkan::DeviceRestore(Draw::DrawContext *draw) {
 }
 
 void DrawEngineVulkan::BeginFrame() {
+	// STV(blq): unico punto de volcado, una vez por cuadro y fuera del bucle de
+	// dibujo. Corre HAYA O NO HAYA transferencias: cero se informa como n=0.
+	// gpuStats.numFlips es un testigo de cuadros independiente de g_cuadros.
+	stvblq::PorCuadro(g_Config.memStickDirectory.c_str(), gpuStats.numFlips);
 	DrawEngineCommon::BeginFrame();
 
 	lastPipeline_ = nullptr;
