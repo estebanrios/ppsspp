@@ -40,8 +40,27 @@
 #include "Core/HLE/KernelWaitHelpers.h"
 #include "GPU/GPUState.h"
 #include "GPU/GPUCommon.h"
+#include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 
 static const int LIST_ID_MAGIC = 0x35000000;
+
+// STV_GE_THREAD_v1: el punto unico por el que se continua la cola de listas.
+// Reemplaza a los gpu->ProcessDLQueue() sueltos de las syscalls y del handler
+// de interrupcion: nivel 0 ejecuta inline identico a upstream; nivel 1 postea
+// la orden al worker y espera la terminacion aca mismo; nivel 2 postea y
+// vuelve. El camino hleSplitSyscallOverGe es de debugger (ShouldSplitOverGe ==
+// NeedsSlowInterpreter() || breakpoints): se conserva tal cual, con una
+// barrera previa por si la palanca del debugger se prendio con una pasada del
+// worker en vuelo — el split ejecuta ProcessDLQueue en el EmuThread via
+// CORE_RUNNING_GE y no puede convivir con el worker.
+static void StvGeDespacharCola(bool permitirSplit) {
+	if (permitirSplit && gpu->ShouldSplitOverGe()) {
+		stvge::Barrera();
+		hleSplitSyscallOverGe();
+		return;
+	}
+	stvge::DespacharProcessDLQueue();
+}
 
 static PspGeCallbackData ge_callback_data[16];
 static bool ge_used_callbacks[16] = {0};
@@ -66,6 +85,15 @@ public:
 	GeIntrHandler() : IntrHandler(PSP_GE_INTR) {}
 
 	bool run(PendingInterrupt& pend) override {
+		// STV_GE_THREAD_v1: este cuerpo lee y ESCRIBE dls[] (dl->state =
+		// COMPLETED) mientras el worker puede estar corriendo otra lista:
+		// candado hasta antes del despacho final, que se suelta explicitamente
+		// porque el despacho en nivel 1 espera al worker (deadlock si lo
+		// tuvieramos tomado). Los returns tempranos lo sueltan por RAII.
+		std::unique_lock<std::recursive_mutex> candadoGe(stvge::g_mu, std::defer_lock);
+		if (stvge::NivelActivo() != 0)
+			candadoGe.lock();
+
 		if (ge_pending_cb.empty()) {
 			ERROR_LOG_REPORT(Log::sceGe, "Unable to run GE interrupt: no pending interrupt");
 			return false;
@@ -146,12 +174,22 @@ public:
 
 		// Hm. This might be really tricky to get to behave the same in both modes. Here we are in __KernelReschedule, CoreTiming::Advance, ProcessEvents, GeExecuteInterrupt, ... .... __RunOnePendingInterrupt
 		// But not sure how much it will matter. The test pause2 hits here.
-		DLResult result = gpu->ProcessDLQueue();
-		_dbg_assert_(result != DLResult::DebugBreak);
+		// STV_GE_THREAD_v1: upstream NO usa el split aca (rompe pause2, ver el
+		// comentario de handleResult); permitirSplit=false lo preserva. El
+		// candado se suelta ANTES: el despacho puede esperar al worker.
+		if (candadoGe.owns_lock())
+			candadoGe.unlock();
+		StvGeDespacharCola(false);
 		return false;
 	}
 
 	void handleResult(PendingInterrupt& pend) override {
+		// STV_GE_THREAD_v1: mismo esquema que run() — candado sobre el estado,
+		// soltado antes del despacho final.
+		std::unique_lock<std::recursive_mutex> candadoGe(stvge::g_mu, std::defer_lock);
+		if (stvge::NivelActivo() != 0)
+			candadoGe.lock();
+
 		GeInterruptData intrdata = ge_pending_cb.front();
 		ge_pending_cb.pop_front();
 
@@ -190,12 +228,9 @@ public:
 		// we are already being extremely inaccurate by blasting the full display list here instead of running
 		// it in the background in parallel with the CPU.
 		// So, when debugging is active, we'll just use hleSplitSyscallOverGe.
-		if (gpu->ShouldSplitOverGe()) {
-			hleSplitSyscallOverGe();
-		} else {
-			DLResult result = gpu->ProcessDLQueue();
-			_dbg_assert_(result != DLResult::DebugBreak);
-		}
+		if (candadoGe.owns_lock())
+			candadoGe.unlock();
+		StvGeDespacharCola(true);  // STV_GE_THREAD_v1
 	}
 };
 
@@ -273,6 +308,14 @@ void __GeShutdown() {
 }
 
 bool __GeTriggerSync(GPUSyncType type, int id, u64 atTicks) {
+	// STV_GE_THREAD_v1: en el worker no se toca CoreTiming (no es thread-safe
+	// y es territorio del EmuThread). Se postea el descriptor con los MISMOS
+	// argumentos y el drenaje ejecuta este mismo cuerpo en el EmuThread. El
+	// true replica el retorno del camino inline (nadie lo consume aca).
+	if (stvge::EnWorker()) {
+		stvge::PostearSync(type, id, atTicks);
+		return true;
+	}
 	u64 userdata = (u64)id << 32 | (u64)type;
 	s64 future = atTicks - CoreTiming::GetTicks();
 	if (type == GPU_SYNC_DRAW) {
@@ -285,6 +328,18 @@ bool __GeTriggerSync(GPUSyncType type, int id, u64 atTicks) {
 }
 
 bool __GeTriggerInterrupt(int listid, u32 pc, u64 atTicks) {
+	// STV_GE_THREAD_v1: idem __GeTriggerSync. En v1.20.4 esta funcion devuelve
+	// true INCONDICIONALMENTE (verificado: no hay camino que devuelva false),
+	// asi que Execute_End puede tomar su rama pendingInterrupt en el worker
+	// sin esperar al drenaje: la decision no depende del kernel. Nota: el cmd
+	// se lee de memoria emulada (pc - 4) recien al drenar; un juego que
+	// reescriba su lista bajo una interrupcion pendiente veria la palabra
+	// nueva, igual que en la PSP real donde la interrupcion tambien llega
+	// despues de ejecutada la lista.
+	if (stvge::EnWorker()) {
+		stvge::PostearInterrupt(listid, pc, atTicks);
+		return true;
+	}
 	GeInterruptData intrdata;
 	intrdata.listid = listid;
 	intrdata.pc = pc;
@@ -358,11 +413,7 @@ u32 sceGeListEnQueue(u32 listAddress, u32 stallAddress, int callbackId, u32 optP
 	if ((int)listID >= 0)
 		listID = LIST_ID_MAGIC ^ listID;
 	if (runList) {
-		if (gpu->ShouldSplitOverGe()) {
-			hleSplitSyscallOverGe();
-		} else {
-			gpu->ProcessDLQueue();
-		}
+		StvGeDespacharCola(true);  // STV_GE_THREAD_v1
 	}
 	hleEatCycles(490);
 	hleCoreTimingForceCheck();
@@ -383,11 +434,7 @@ u32 sceGeListEnQueueHead(u32 listAddress, u32 stallAddress, int callbackId, u32 
 	if ((int)listID >= 0)
 		listID = LIST_ID_MAGIC ^ listID;
 	if (runList) {
-		if (gpu->ShouldSplitOverGe()) {
-			hleSplitSyscallOverGe();
-		} else {
-			gpu->ProcessDLQueue();
-		}
+		StvGeDespacharCola(true);  // STV_GE_THREAD_v1
 	}
 	hleEatCycles(480);
 	hleCoreTimingForceCheck();
@@ -411,11 +458,7 @@ static int sceGeListUpdateStallAddr(u32 displayListID, u32 stallAddress) {
 	bool runList;
 	int retval = gpu->UpdateStall(LIST_ID_MAGIC ^ displayListID, stallAddress, &runList);
 	if (runList) {
-		if (gpu->ShouldSplitOverGe()) {
-			hleSplitSyscallOverGe();
-		} else {
-			gpu->ProcessDLQueue();
-		}
+		StvGeDespacharCola(true);  // STV_GE_THREAD_v1
 	}
 	return hleNoLog(retval);
 }
@@ -439,11 +482,7 @@ static int sceGeContinue() {
 	bool runList;
 	int ret = gpu->Continue(&runList);
 	if (runList) {
-		if (gpu->ShouldSplitOverGe()) {
-			hleSplitSyscallOverGe();
-		} else {
-			gpu->ProcessDLQueue();
-		}
+		StvGeDespacharCola(true);  // STV_GE_THREAD_v1
 	}
 	hleEatCycles(220);
 	hleReSchedule("ge continue");
@@ -529,6 +568,10 @@ static int sceGeUnsetCallback(u32 cbID) {
 // Points to 512 32-bit words, where we can probably layout the context however we want
 // unless some insane game pokes it and relies on it...
 u32 sceGeSaveContext(u32 ctxAddr) {
+	// STV_GE_THREAD_v1: BusyDrawing toma el candado del GE adentro. Si vuelve
+	// false, la cola quedo vacia CON el candado tomado, o sea el worker
+	// termino su pasada y no puede arrancar otra sin que ESTE hilo lo
+	// despierte: el gstate.Save de abajo no necesita candado propio.
 	if (gpu->BusyDrawing()) {
 		// Real error code.
 		return hleLogWarning(Log::sceGe, -1, "lists in process, aborting");
@@ -545,6 +588,9 @@ u32 sceGeSaveContext(u32 ctxAddr) {
 }
 
 u32 sceGeRestoreContext(u32 ctxAddr) {
+	// STV_GE_THREAD_v1: mismo razonamiento que sceGeSaveContext — worker
+	// probadamente idle tras BusyDrawing()==false; ReapplyGfxState ademas
+	// toma el candado por su cuenta.
 	if (gpu->BusyDrawing()) {
 		return hleLogWarning(Log::sceGe, SCE_KERNEL_ERROR_BUSY, "lists in process, aborting");
 	}
