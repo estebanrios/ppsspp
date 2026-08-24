@@ -16,6 +16,7 @@
 // =============================================================================
 
 #include <condition_variable>
+#include <sched.h>
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
@@ -135,11 +136,40 @@ uint64_t TickDeLaOrden() {
 	return tl_tickOrden;
 }
 
+// --- Afinidad ----------------------------------------------------------------
+//
+// El A523 tiene dos clusters de A55: p0-p3 a 1416 MHz y p4-p7 a 2232. Con el
+// worker activo, EmuThread y worker ALTERNAN (util ~50 % cada uno) y EAS los
+// ve livianos: los rebota por los littles y les mete latencia de despertar en
+// cada handshake — MEDIDO en el banco (2026-08-24): nivel 1 daba 33 ms/cuadro
+// (30 fps) con los tres hilos migrando por las 8 CPUs, contra 16,7 ms del
+// inline, cuyo hilo unico al 95 % de util se planta solo en un big. Clavar
+// worker y EmuThread al cluster grande mientras el nivel > 0 devuelve la
+// colocacion que upstream consigue gratis por concentrar todo en un hilo.
+// Best effort a proposito: si el kernel rechaza la mascara (otra topologia),
+// se sigue sin afinidad, que es exactamente el comportamiento de hoy.
+
+static void AfinidadCluster(bool soloGrandes) {
+#if defined(__linux__)
+	// cpu_set_t/sched_setaffinity son de Linux/bionic; en las demas
+	// plataformas del fork esto es un no-op (alli no existe el A523).
+	cpu_set_t set;
+	CPU_ZERO(&set);
+	const int desde = soloGrandes ? 4 : 0;
+	for (int c = desde; c <= 7; c++)
+		CPU_SET(c, &set);
+	sched_setaffinity(0, sizeof(set), &set);  // 0 = el hilo que llama
+#else
+	(void)soloGrandes;
+#endif
+}
+
 // --- El worker ---------------------------------------------------------------
 
 static void WorkerMain() {
 	SetCurrentThreadName("STVGeWorker");
 	tl_enWorker = true;
+	AfinidadCluster(true);
 
 	std::unique_lock<std::mutex> lk(g_muCola);
 	while (true) {
@@ -366,6 +396,10 @@ void PorVblank() {
 	// vacias de verdad antes de mover la palanca.
 	Drenar();
 	g_nivelActivo.store(deseado, std::memory_order_relaxed);
+
+	// PorVblank corre EN el EmuThread: fijarlo al cluster grande junto con el
+	// worker (ver "Afinidad" arriba), y devolverle las 8 CPUs al apagar.
+	AfinidadCluster(deseado > 0);
 
 	if (!g_hola && deseado > 0) {
 		g_hola = true;
