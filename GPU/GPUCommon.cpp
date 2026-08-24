@@ -1927,10 +1927,17 @@ void GPUCommon::DoBlockTransfer(u32 skipDrawReason) {
 
 		// STV(blq): cierra t_copia. Invalidate + NotifyBlockTransferAfter quedan
 		// FUERA de t_copia (y dentro de t_total), que es lo que corresponde.
-		stvEv.tCopia = stvblq::Marca(stvEv) - stvEv.tCopia;
+		const uint64_t stvTepi = stvblq::Marca(stvEv);   // STV(epi): una sola lectura
+		stvEv.tCopia = stvTepi - stvEv.tCopia;
+		stvEv.tPreEpi = stvTepi;                          // STV(epi)
 		if (framebufferManager_) {
 			// Fixes Gran Turismo's funky text issue, since it overwrites the current texture.
-			textureCache_->Invalidate(dstBasePtr + (dstY * dstStride + dstX) * bpp, height * dstStride * bpp, GPU_INVALIDATE_HINT);
+			// STV(epi): MISMA cabeza, MISMO instante; el recorrido del mapa se
+			// acumula y se hace una vez por tanda. NotifyBlockTransferAfter, en
+			// cambio, se sigue llamando SIEMPRE: puede tener efectos reales
+			// (DrawPixels) y fusionarlo NO seria inofensivo.
+			textureCache_->InvalidateDiferido(dstBasePtr + (dstY * dstStride + dstX) * bpp, height * dstStride * bpp);
+			stvEv.tInval = stvblq::Marca(stvEv) - stvTepi;   // STV(epi): corte Invalidate | NotifyAfter
 			framebufferManager_->NotifyBlockTransferAfter(dstBasePtr, dstStride, dstX, dstY, srcBasePtr, srcStride, srcX, srcY, width, height, bpp, skipDrawReason);
 		}
 	}

@@ -34,6 +34,7 @@
 #include "Core/Debugger/MemBlockInfo.h"
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
+#include "GPU/Common/StvEpilogo.h"
 #include "GPU/Common/PresentationCommon.h"
 #include "GPU/Common/TextureCacheCommon.h"
 #include "GPU/Common/ReinterpretFramebuffer.h"
@@ -2307,6 +2308,16 @@ bool FramebufferManagerCommon::FindTransferFramebuffer(u32 basePtr, int stride_p
 		}
 
 		if (vfb_byteStride != byteStride) {
+			// STV(aft) nivel 3: la escotilla de stride de abajo reinterpreta un
+			// bloque como "una linea" del framebuffer. Eso solo puede significar
+			// algo si los dos hablan del mismo tipo de pixel. Si el bpp de la
+			// transferencia no coincide con el del formato del vfb, no calza ni
+			// el stride ni el pixel: no es candidato.
+			// No toca el camino de stride que SI coincide (el else de mas abajo).
+			if (stvepi::g_fusion >= 3 && (u32)bpp != vfb_bpp) {
+				stvepi::g_aftEstricta++;
+				continue;
+			}
 			// Grand Knights History occasionally copies with a mismatching stride but a full line at a time.
 			// That's why we multiply by height, not width - this copy is a rectangle with the wrong stride but a line with the correct one.
 			// Makes it hard to detect the wrong transfers in e.g. God of War.
@@ -2593,6 +2604,7 @@ void FramebufferManagerCommon::ApplyClearToMemory(int x1, int y1, int x2, int y2
 }
 
 bool FramebufferManagerCommon::NotifyBlockTransferBefore(u32 dstBasePtr, int dstStride, int dstX, int dstY, u32 srcBasePtr, int srcStride, int srcX, int srcY, int width, int height, int bpp, u32 skipDrawReason) {
+	stvBusq_.armado = false;   // STV(aft): solo lo arma la salida de :2796
 	if (!useBufferedRendering_) {
 		return false;
 	}
@@ -2610,6 +2622,29 @@ bool FramebufferManagerCommon::NotifyBlockTransferBefore(u32 dstBasePtr, int dst
 	// These modify the X/Y/W/H parameters depending on the memory offset of the base pointers from the actual buffers.
 	bool srcBuffer = FindTransferFramebuffer(srcBasePtr, srcStride, srcX, srcY, width, height, bpp, false, &srcRect);
 	bool dstBuffer = FindTransferFramebuffer(dstBasePtr, dstStride, dstX, dstY, width, height, bpp, true, &dstRect);
+
+	// STV(aft): le dejamos servida a NotifyBlockTransferAfter la busqueda que
+	// acabamos de hacer, para que no la repita (el TODO de upstream, mas abajo).
+	// FindTransferFramebuffer es una consulta PURA sobre vfbs_, asi que su
+	// resultado se puede reproducir mientras vfbs_ no cambie — y entre este
+	// punto y la llamada a After solo corren el memcpy sobre memoria emulada y
+	// la invalidacion de la cache de texturas, que no pueden tocarlo.
+	// Se invoca en los DOS desenlaces que devuelven false delegando en After:
+	// el de "subilo vos" (dstBuffer) y el de "aca no hay nada" (ni src ni dst),
+	// que MEDIDO en el aparato es el 93,3 % de las llamadas.
+	auto stvArmarBusqueda = [&]() {
+		stvBusq_.armado = true;
+		stvBusq_.srcBuffer = srcBuffer;
+		stvBusq_.dstBuffer = dstBuffer;
+		stvBusq_.nVfbs = vfbs_.size();
+		stvBusq_.dstBasePtr = dstBasePtr; stvBusq_.dstStride = dstStride;
+		stvBusq_.dstX = dstX; stvBusq_.dstY = dstY;
+		stvBusq_.srcBasePtr = srcBasePtr; stvBusq_.srcStride = srcStride;
+		stvBusq_.srcX = srcX; stvBusq_.srcY = srcY;
+		stvBusq_.width = width; stvBusq_.height = height; stvBusq_.bpp = bpp;
+		stvBusq_.srcRect = srcRect;
+		stvBusq_.dstRect = dstRect;
+	};
 
 	if (srcRect.channel == RASTER_DEPTH) {
 		// Ignore the found buffer if it's not 16-bit - we create a new more suitable one instead.
@@ -2793,6 +2828,7 @@ bool FramebufferManagerCommon::NotifyBlockTransferBefore(u32 dstBasePtr, int dst
 
 		// Here we should just draw the pixels into the buffer. Return false to copy the memory first.
 		// NotifyBlockTransferAfter will take care of the rest.
+		stvArmarBusqueda();   // STV(aft)
 		return false;
 	} else if (srcBuffer) {
 		if (width == 48 && height == 48 && srcY == 224 && srcX == 432 && PSP_CoreParameter().compat.flags().TacticsOgreEliminateDebugReadback) {
@@ -2820,6 +2856,7 @@ bool FramebufferManagerCommon::NotifyBlockTransferBefore(u32 dstBasePtr, int dst
 		}
 		return false;  // Let the bit copy happen
 	} else {
+		stvArmarBusqueda();   // STV(aft): el desenlace mas comun, y el mas futil
 		return false;
 	}
 }
@@ -2848,23 +2885,61 @@ void FramebufferManagerCommon::NotifyBlockTransferAfter(u32 dstBasePtr, int dstS
 		}
 	}
 
+	stvepi::g_aftLlamadas++;   // STV(aft)
 	if (MayIntersectFramebufferColor(srcBasePtr) || MayIntersectFramebufferColor(dstBasePtr)) {
+		stvepi::g_aftPuerta++;   // STV(aft)
 		// TODO: Figure out how we can avoid repeating the search here.
 
 		BlockTransferRect dstRect{};
 		BlockTransferRect srcRect{};
+		bool srcBuffer, dstBuffer;
 
-		// These modify the X/Y/W/H parameters depending on the memory offset of the base pointers from the actual buffers.
-		bool srcBuffer = FindTransferFramebuffer(srcBasePtr, srcStride, srcX, srcY, width, height, bpp, false, &srcRect);
-		bool dstBuffer = FindTransferFramebuffer(dstBasePtr, dstStride, dstX, dstY, width, height, bpp, true, &dstRect);
+		// STV(aft): el TODO de arriba, hecho. Se reusa el resultado de Before si
+		// esta armado y los ONCE parametros calzan exactos (y vfbs_ no cambio de
+		// tamano). Ante el minimo desajuste se busca como upstream.
+		const bool stvCalza = stvepi::g_fusion >= 2 && stvBusq_.armado &&
+			stvBusq_.nVfbs == vfbs_.size() &&
+			stvBusq_.dstBasePtr == dstBasePtr && stvBusq_.dstStride == dstStride &&
+			stvBusq_.dstX == dstX && stvBusq_.dstY == dstY &&
+			stvBusq_.srcBasePtr == srcBasePtr && stvBusq_.srcStride == srcStride &&
+			stvBusq_.srcX == srcX && stvBusq_.srcY == srcY &&
+			stvBusq_.width == width && stvBusq_.height == height && stvBusq_.bpp == bpp;
+		stvBusq_.armado = false;   // se consume una sola vez, calce o no
+		if (stvCalza) {
+			srcBuffer = stvBusq_.srcBuffer;  srcRect = stvBusq_.srcRect;
+			dstBuffer = stvBusq_.dstBuffer;  dstRect = stvBusq_.dstRect;
+			stvepi::g_aftReuso++;
+		} else {
+			const uint64_t stvT0 = stvepi::Marca();
+			// These modify the X/Y/W/H parameters depending on the memory offset of the base pointers from the actual buffers.
+			srcBuffer = FindTransferFramebuffer(srcBasePtr, srcStride, srcX, srcY, width, height, bpp, false, &srcRect);
+			dstBuffer = FindTransferFramebuffer(dstBasePtr, dstStride, dstX, dstY, width, height, bpp, true, &dstRect);
+			stvepi::g_tkAftBusq += stvepi::Marca() - stvT0;
+			stvepi::g_aftBusq++;
+		}
+		if (srcBuffer) stvepi::g_aftSrcBuf++;
+		if (dstBuffer) stvepi::g_aftDstBuf++;
 
 		// A few games use this INSTEAD of actually drawing the video image to the screen, they just blast it to
 		// the backbuffer. Detect this and have the framebuffermanager draw the pixels.
 		if ((!useBufferedRendering_ && currentRenderVfb_ != dstRect.vfb) || dstRect.vfb == nullptr) {
+			stvepi::g_aftSinVfb++;   // STV(aft)
 			return;
 		}
 
+		// STV(aft): a partir de aca es TRABAJO REAL (subida a la GPU), no
+		// contabilidad. Se cronometra, no se toca.
+		const uint64_t stvTd = stvepi::Marca();
 		if (dstBuffer && !srcBuffer) {
+			stvepi::g_aftDibujo++;   // STV(aft)
+			// STV(aft): radiografia de ESTA subida, antes de que el cuerpo de
+			// abajo pueda redimensionar el buffer y cambiar dstRect.
+			stvepi::AnotarDib(dstBasePtr, (uint32_t)dstStride, (uint32_t)width,
+				(uint32_t)height, (uint32_t)bpp,
+				dstRect.vfb->fb_address, (uint32_t)dstRect.vfb->FbStrideInBytes(),
+				(uint32_t)dstRect.vfb->fb_format,
+				(uint32_t)dstRect.vfb->width, (uint32_t)dstRect.vfb->height,
+				dstRect.x_bytes, dstRect.y, dstRect.w_bytes, dstRect.h);
 			WARN_LOG_ONCE(btu, Log::G3D, "Block transfer upload %08x -> %08x (%dx%d %d,%d bpp=%d)", srcBasePtr, dstBasePtr, width, height, dstX, dstY, bpp);
 			FlushBeforeCopy();
 			const u8 *srcBase = Memory::GetPointerUnchecked(srcBasePtr) + (srcX + srcY * srcStride) * bpp;
@@ -2887,6 +2962,7 @@ void FramebufferManagerCommon::NotifyBlockTransferAfter(u32 dstBasePtr, int dstS
 			SetColorUpdated(dstRect.vfb, skipDrawReason);
 			RebindFramebuffer("RebindFramebuffer - NotifyBlockTransferAfter");
 		}
+		stvepi::g_tkAftDib += stvepi::Marca() - stvTd;   // STV(aft)
 	}
 }
 

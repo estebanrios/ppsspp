@@ -29,6 +29,7 @@
 #include <cstdlib>
 
 #include "Common/TimeUtil.h"
+#include "GPU/Common/StvEpilogo.h"   // STV(epi): contadores de la fusion
 
 #if defined(__ANDROID__)
 #include <android/log.h>
@@ -142,6 +143,8 @@ inline uint64_t g_bytes     = 0;
 inline uint64_t g_tkNotify  = 0;
 inline uint64_t g_tkCopia   = 0;
 inline uint64_t g_tkTotal   = 0;
+inline uint64_t g_tkEpi     = 0;   // STV(epi): epilogo ENTERO (Invalidate + NotifyAfter)
+inline uint64_t g_tkInval   = 0;   // STV(epi): solo la parte de Invalidate
 inline uint32_t g_detallado = 0;   // MemBlockInfoDetailed(...) dio true
 inline uint32_t g_sinGestor = 0;   // framebufferManager_ == nullptr
 inline uint32_t g_fueraDeRango = 0;
@@ -165,6 +168,9 @@ inline double   g_tQueja    = 0.0;
 inline void Reiniciar() {
 	g_llamadas = g_bytes = 0;
 	g_tkNotify = g_tkCopia = g_tkTotal = 0;
+	g_tkEpi = 0;                 // STV(epi)
+	g_tkInval = 0;               // STV(epi)
+	stvepi::Reiniciar();         // STV(epi)
 	g_detallado = g_sinGestor = g_fueraDeRango = 0;
 	g_memcpyGE = g_memsetGE = 0;
 	memset(g_cam, 0, sizeof(g_cam));
@@ -189,6 +195,8 @@ struct Evento {
 	uint64_t t0;        // ticks al entrar
 	uint64_t tNotify;   // ticks DENTRO de NotifyBlockTransferBefore
 	uint64_t tCopia;    // al abrir el bloque de copia: la marca. al cerrar: la duracion
+	uint64_t tPreEpi;   // STV(epi): tick ABSOLUTO del cierre de t_copia. 0 = no hubo epilogo.
+	uint64_t tInval;    // STV(epi): duracion de textureCache_->Invalidate*(...)
 	uint32_t w, h, bpp, ss, ds;
 	uint32_t src, dst;  // direcciones EFECTIVAS de la primera linea
 	uint8_t  camino;
@@ -204,6 +212,8 @@ inline void Inicio(Evento &e) {
 	e.detallado = 0;
 	e.tNotify = 0;
 	e.tCopia = 0;
+	e.tPreEpi = 0;   // STV(epi)
+	e.tInval = 0;    // STV(epi)
 	e.w = e.h = e.bpp = e.ss = e.ds = 0;
 	e.src = e.dst = 0;
 	e.t0 = e.on ? Ticks() : 0;
@@ -241,6 +251,18 @@ inline void Registrar(Evento &e) {
 	g_tkNotify += e.tNotify;
 	g_tkCopia  += e.tCopia;
 	g_tkTotal  += tt;
+	// STV(epi): epilogo = (fin de la funcion) - (cierre de t_copia). Sale de
+	// dos marcas que el instrumento YA tomaba: cero lecturas de reloj nuevas.
+	// Y adentro, `tInval` separa la invalidacion de la cache de texturas de
+	// NotifyBlockTransferAfter: eso SI cuesta UNA lectura de reloj mas por
+	// llamada (~29 ns medidos, ~1 % de un epilogo de ~2,6 us), y es lo unico
+	// que distingue "el epilogo era Invalidate" de "el epilogo era el gestor
+	// de framebuffers". Sin esa separacion, un A/B flojo no se puede explicar.
+	if (e.tPreEpi) {
+		const uint64_t fin = e.t0 + tt;
+		if (fin > e.tPreEpi) g_tkEpi += fin - e.tPreEpi;
+		g_tkInval += e.tInval;
+	}
 	if (e.detallado) g_detallado++;
 
 	const unsigned cam = e.camino < NUM_CAMINOS ? e.camino : (unsigned)CAM_DESCONOCIDO;
@@ -345,19 +367,32 @@ inline void EmitirReloj() {
 
 // --- volcado ----------------------------------------------------------------
 inline void Volcar(double ventana, int flips) {
-	char b[640];
+	char b[1024];   // STV(aft): entran epi_* y aft_*
 
 	// INICIO sale SIEMPRE, aunque no haya habido ni una transferencia. Cero
 	// transferencias se informa como n=0; nunca como silencio.
 	snprintf(b, sizeof(b),
-		"STV: blq INICIO ventana=%.3f cuadros=%u flips=%d n=%llu bytes=%llu det=%u singestor=%u fuera=%u memcpyGE=%u memsetGE=%u tnotify_ns=%llu tcopia_ns=%llu ttotal_ns=%llu frq=%llu lectura_ns=%.1f marca=%s",
+		"STV: blq INICIO ventana=%.3f cuadros=%u flips=%d n=%llu bytes=%llu det=%u singestor=%u fuera=%u memcpyGE=%u memsetGE=%u tnotify_ns=%llu tcopia_ns=%llu ttotal_ns=%llu frq=%llu lectura_ns=%.1f marca=%s"
+		" epi_on=%d epi_ns=%llu epi_inval_ns=%llu epi_dif=%u epi_fus=%u epi_pas=%u epi_uso=%u epi_fin=%u epi_umb=%u epi_marca=%s"
+		" aft_n=%u aft_puerta=%u aft_reuso=%u aft_busq=%u aft_dstbuf=%u aft_srcbuf=%u aft_dib=%u aft_sinvfb=%u aft_estricta=%u aft_busq_ns=%llu aft_dib_ns=%llu",
 		ventana, g_cuadros, flips,
 		(unsigned long long)g_llamadas, (unsigned long long)g_bytes,
 		g_detallado, g_sinGestor, g_fueraDeRango, g_memcpyGE, g_memsetGE,
 		(unsigned long long)ANanos(g_tkNotify),
 		(unsigned long long)ANanos(g_tkCopia),
 		(unsigned long long)ANanos(g_tkTotal),
-		(unsigned long long)g_frq, g_lecturaNs, kMarca);
+		(unsigned long long)g_frq, g_lecturaNs, kMarca,
+		stvepi::g_fusion,
+		(unsigned long long)ANanos(g_tkEpi),
+		(unsigned long long)ANanos(g_tkInval),
+		stvepi::g_diferidas, stvepi::g_fusionadas, stvepi::g_pasadas,
+		stvepi::g_vaciados[stvepi::MOT_USO], stvepi::g_vaciados[stvepi::MOT_FIN],
+		stvepi::g_vaciados[stvepi::MOT_UMBRAL], stvepi::kMarca,
+		stvepi::g_aftLlamadas, stvepi::g_aftPuerta, stvepi::g_aftReuso,
+		stvepi::g_aftBusq, stvepi::g_aftDstBuf, stvepi::g_aftSrcBuf,
+		stvepi::g_aftDibujo, stvepi::g_aftSinVfb, stvepi::g_aftEstricta,
+		(unsigned long long)ANanos(stvepi::g_tkAftBusq),
+		(unsigned long long)ANanos(stvepi::g_tkAftDib));
 	Emitir(b);
 
 	for (unsigned i = 0; i < NUM_CAMINOS; i++) {
@@ -389,6 +424,20 @@ inline void Volcar(double ventana, int flips) {
 			f.srcMin, f.srcMax, f.dstMin, f.dstMax);
 		Emitir(b);
 	}
+	for (unsigned i = 0; i < stvepi::kMaxDib; i++) {
+		const stvepi::MuestraDib &m = stvepi::g_dib[i];
+		if (!m.usada) continue;
+		snprintf(b, sizeof(b),
+			"STV: blq dib i=%u n=%u ds=%u w=%u h=%u bpp=%u dmin=0x%08x dmax=0x%08x"
+			" fb=0x%08x fbss=%u fbfmt=%u fbw=%u fbh=%u rx=%d ry=%d rw=%d rh=%d",
+			i, m.n, m.ds, m.w, m.h, m.bpp, m.dstMin, m.dstMax,
+			m.fbAddr, m.fbStride, m.fbFmt, m.fbW, m.fbH,
+			(int)m.rx, (int)m.ry, (int)m.rw, (int)m.rh);
+		Emitir(b);
+	}
+	snprintf(b, sizeof(b), "STV: blq dibs n=%u desborde=%u",
+		stvepi::g_aftDibujo, stvepi::g_dibDesborde);
+	Emitir(b);
 	snprintf(b, sizeof(b), "STV: blq formas n=%u desborde=%u fuera=%u",
 		g_nFormas, g_formasDesborde, g_fueraDeRango);
 	Emitir(b);
@@ -407,6 +456,7 @@ inline void PorCuadro(const char *memstick, int numFlips) {
 	const char *via = "nada";
 	const int antes = g_activo;
 	g_activo = Resolver(memstick, &via);
+	stvepi::g_crono = g_activo;   // STV(aft): el reloj de After sigue al instrumento
 
 	if (g_activo) {
 		if (!antes) {

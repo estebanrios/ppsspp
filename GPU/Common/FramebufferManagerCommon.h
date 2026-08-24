@@ -603,6 +603,28 @@ protected:
 	// The range of PSP memory that may contain FBOs.  So we can skip iterating.
 	u32 framebufColorRangeEnd_ = 0;
 
+	// --- STV(aft): cache de la busqueda de NotifyBlockTransferBefore ---
+	// Se ARMA en la unica salida de Before que deja el trabajo para After
+	// (FramebufferManagerCommon.cpp: "NotifyBlockTransferAfter will take care
+	// of the rest"), y se CONSUME una sola vez en After. Vive microsegundos,
+	// dentro de UNA llamada a GPUCommon::DoBlockTransfer, y entre el armado y
+	// el consumo solo corren el memcpy sobre la memoria emulada del PSP y la
+	// invalidacion de la cache de texturas: ninguno de los dos puede tocar
+	// vfbs_. Ver el argumento completo en tools/ppsspp/parches/blq-after.sh.
+	struct StvBusquedaCache {
+		bool armado = false;
+		bool srcBuffer = false;
+		bool dstBuffer = false;
+		size_t nVfbs = 0;
+		u32 dstBasePtr = 0, srcBasePtr = 0;
+		int dstStride = 0, dstX = 0, dstY = 0;
+		int srcStride = 0, srcX = 0, srcY = 0;
+		int width = 0, height = 0, bpp = 0;
+		BlockTransferRect srcRect{};
+		BlockTransferRect dstRect{};
+	};
+	StvBusquedaCache stvBusq_;
+
 	bool useBufferedRendering_ = false;
 	bool postShaderIsUpscalingFilter_ = false;
 	bool postShaderIsSupersampling_ = false;

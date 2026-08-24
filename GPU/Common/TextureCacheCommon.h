@@ -355,6 +355,12 @@ public:
 	bool SetOffsetTexture(u32 yOffset);
 	void Invalidate(u32 addr, int size, GPUInvalidationType type);
 	void InvalidateAll(GPUInvalidationType type);
+	// STV(epi): version DIFERIDA de Invalidate(addr, size, GPU_INVALIDATE_HINT)
+	// para el epilogo de GPUCommon::DoBlockTransfer. Hace la CABEZA (el
+	// DIRTY_TEXTURE_IMAGE de la textura atada) en el acto, y acumula el rango
+	// del RECORRIDO del mapa para hacerlo una sola vez por tanda. Ver el
+	// argumento de correccion en tools/ppsspp/parches/blq-epilogo.sh.
+	void InvalidateDiferido(u32 addr, int size);
 	void ClearNextFrame();
 
 	TextureShaderCache *GetTextureShaderCache() { return textureShaderCache_; }
@@ -513,6 +519,14 @@ protected:
 	int decimationCounter_;
 	int texelsScaledThisFrame_ = 0;
 	int timesInvalidatedAllThisFrame_ = 0;
+
+	// --- STV(epi): rango sucio pendiente del epilogo de bloque ---
+	// TRES ENTEROS, a proposito: no hay punteros a entradas de la cache, asi
+	// que borrar/agregar/vaciar `cache_` con un rango pendiente es inofensivo.
+	void StvVaciarInvalidacion(unsigned motivo);
+	bool stvInvPend_ = false;
+	u32 stvInvMin_ = 0;
+	u32 stvInvMax_ = 0;
 	double replacementTimeThisFrame_ = 0;
 	// Recomputed once per frame. Depends FPS and soon also config.
 	double replacementFrameBudgetSeconds_ = 0.5 / 60.0;
