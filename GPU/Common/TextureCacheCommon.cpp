@@ -1303,13 +1303,17 @@ bool TextureCacheCommon::GetCurrentFramebufferTextureDebug(GPUDebugBuffer &buffe
 	*isFramebuffer = true;
 
 	VirtualFramebuffer *vfb = nextFramebufferTexture_;
-	u8 sf = vfb->renderScaleFactor;
-	int x = gstate_c.curTextureXOffset * sf;
-	int y = gstate_c.curTextureYOffset * sf;
-	int desiredW = gstate.getTextureWidth(0) * sf;
-	int desiredH = gstate.getTextureHeight(0) * sf;
-	int w = std::min(desiredW, vfb->bufferWidth * sf - x);
-	int h = std::min(desiredH, vfb->bufferHeight * sf - y);
+	// STV_ESCALA_v1 (DELICADO, self-texturing): este es el lector de debug del
+	// framebuffer-como-textura. sf pasa de u8 a float y cada producto->int usa
+	// el redondeo unico, igual que los blits reales — lo que se inspecciona
+	// coincide con lo que se dibuja.
+	const float sf = vfb->renderScaleFactor;
+	int x = StvEscalarDim(gstate_c.curTextureXOffset, sf);
+	int y = StvEscalarDim(gstate_c.curTextureYOffset, sf);
+	int desiredW = StvEscalarDim(gstate.getTextureWidth(0), sf);
+	int desiredH = StvEscalarDim(gstate.getTextureHeight(0), sf);
+	int w = std::min(desiredW, StvEscalarDim(vfb->bufferWidth, sf) - x);
+	int h = std::min(desiredH, StvEscalarDim(vfb->bufferHeight, sf) - y);
 
 	bool retval;
 	if (nextFramebufferTextureChannel_ == RASTER_DEPTH) {
@@ -1462,12 +1466,16 @@ void TextureCacheCommon::LoadClut(u32 clutAddr, u32 loadBytes, GPURecord::Record
 			const int totalPixelsOffset = clutRenderOffset_ / fb_bpp;
 			const int clutYOffset = totalPixelsOffset / chosenFramebuffer->fb_stride;
 			const int clutXOffset = totalPixelsOffset % chosenFramebuffer->fb_stride;
-			const int scale = chosenFramebuffer->renderScaleFactor;
+			// STV_ESCALA_v1 (DELICADO, CLUT renderizada): el rect de origen se
+			// redondea al texel con el redondeo unico — la franja de 512x1 que
+			// se lee debe caer donde los draws la escribieron, no a mitad de
+			// texel. El factor viaja float a BlitUsingRaster (uniform float).
+			const float scale = chosenFramebuffer->renderScaleFactor;
 
 			// Copy the pixels to our temp clut, scaling down if needed and wrapping.
 			framebufferManager_->BlitUsingRaster(
-				chosenFramebuffer->fbo, clutXOffset * scale, clutYOffset * scale, (clutXOffset + 512.0f) * scale, (clutYOffset + 1.0f) * scale,
-				dynamicClutTemp_, 0.0f, 0.0f, 512.0f, 1.0f, 
+				chosenFramebuffer->fbo, StvEscalarDim(clutXOffset, scale), StvEscalarDim(clutYOffset, scale), StvEscalarDim(clutXOffset + 512.0f, scale), StvEscalarDim(clutYOffset + 1.0f, scale),
+				dynamicClutTemp_, 0.0f, 0.0f, 512.0f, 1.0f,
 				false, scale, framebufferManager_->Get2DPipeline(DRAW2D_COPY_COLOR_RECT2LIN), "copy_clut_to_temp");
 
 			framebufferManager_->RebindFramebuffer("after_copy_clut_to_temp");
@@ -2400,7 +2408,10 @@ void TextureCacheCommon::ApplyTextureFramebuffer(VirtualFramebuffer *framebuffer
 		int texWidth = framebuffer->bufferWidth;
 		if (needsDepthXSwizzle) {
 			texWidth = RoundToNextPowerOf2(framebuffer->bufferWidth);
-			depalWidth = texWidth * framebuffer->renderScaleFactor;
+			// STV_ESCALA_v1 (DELICADO, depal sobre framebuffer): tamano del
+			// FBO temporal de depal con el redondeo unico, coherente con el
+			// renderWidth redondeado del vfb que se muestrea.
+			depalWidth = StvEscalarDim(texWidth, framebuffer->renderScaleFactor);
 			gstate_c.Dirty(DIRTY_UVSCALEOFFSET);
 		}
 
@@ -2411,6 +2422,13 @@ void TextureCacheCommon::ApplyTextureFramebuffer(VirtualFramebuffer *framebuffer
 		float u2 = depalWidth;
 		float v2 = framebuffer->renderHeight;
 		if (bounds.minV < bounds.maxV) {
+			// STV_ESCALA_v1 (DELICADO, depal sobre framebuffer — el feedback
+			// de GoW pasa por aca cuando depaletiza su propio buffer): estos
+			// bounds YA eran float en upstream (curTextureXOffset es float);
+			// el producto con factor fraccional sigue siendo float y se recorta
+			// igual que antes por el scissor. NO se redondea: son coordenadas
+			// de recorte conservadoras, no un rect que deba calzar texel a
+			// texel con otro lado.
 			u1 = (bounds.minU + gstate_c.curTextureXOffset) * framebuffer->renderScaleFactor;
 			v1 = (bounds.minV + gstate_c.curTextureYOffset) * framebuffer->renderScaleFactor;
 			u2 = (bounds.maxU + gstate_c.curTextureXOffset) * framebuffer->renderScaleFactor;
@@ -2439,6 +2457,9 @@ void TextureCacheCommon::ApplyTextureFramebuffer(VirtualFramebuffer *framebuffer
 		draw_->BindSamplerStates(0, 1, &nearest);
 		draw_->BindSamplerStates(1, 1, &clutSampler);
 
+		// STV_ESCALA_v1 (DELICADO, depal sobre framebuffer): el factor viaja
+		// float hasta el uniform scaleFactor del shader de deswizzle — con
+		// x1.5 la franja del deswizzle mide 6.0 texeles exactos (4.0*1.5).
 		draw2D_->Blit(textureShader, u1, v1, u2, v2, u1, v1, u2, v2, framebuffer->renderWidth, framebuffer->renderHeight, depalWidth, framebuffer->renderHeight, false, framebuffer->renderScaleFactor);
 
 		gpuStats.numDepal++;

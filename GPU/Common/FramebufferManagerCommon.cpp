@@ -41,6 +41,71 @@
 #include "GPU/GPUCommon.h"
 #include "GPU/GPUState.h"
 
+// =============================================================================
+// STV_ESCALA_v1 — escalas fraccionales de render (x1.25 / x1.5 / x1.75).
+//
+// God of War esta limitado por fill de GPU a x2 (960x544). Las escalas
+// intermedias recortan el fill para alcanzar 60 fps sin caer a x1. La palanca
+// SOLO pisa la config x2 del usuario; con x1/x3 se ignora (y se avisa).
+// Ver el helper StvEscalarDim y los tipos float en FramebufferManagerCommon.h.
+// =============================================================================
+
+#include <cstdlib>  // getenv
+#include <cstring>
+#if defined(__ANDROID__)
+#include <android/log.h>
+#include <sys/system_properties.h>
+#endif
+
+namespace {
+
+// Marca de version rastreable en el binario:
+//   strings libppsspp_jni.so | grep STV_ESCALA_v1
+constexpr const char *kStvEscalaMarca = "STV_ESCALA_v1";
+
+// "125"/"150"/"175" -> factor; cualquier otro valor o ausencia = 0.0f (OFF,
+// comportamiento upstream exacto). A diferencia de las palancas por niveles
+// (debug.stv.ge, debug.stv.epi) aca NO hay clampeo ni default distinto de
+// OFF: la palanca es un enum cerrado y un typo la deja APAGADA — falla a
+// upstream, nunca a una escala rara.
+float StvEscalaDeTexto(const char *s) {
+	if (!s || !*s)
+		return 0.0f;
+	if (!strcmp(s, "125"))
+		return 1.25f;
+	if (!strcmp(s, "150"))
+		return 1.5f;
+	if (!strcmp(s, "175"))
+		return 1.75f;
+	return 0.0f;
+}
+
+// El env manda sobre la prop (patron StvGeThread/StvEpilogo): es lo que usa
+// el banco cuando corre el binario fuera de Android.
+float StvResolverEscala() {
+	const char *e = getenv("STV_ESCALA");
+	if (e && *e)
+		return StvEscalaDeTexto(e);
+#if defined(__ANDROID__)
+	char prop[PROP_VALUE_MAX] = { 0 };
+	if (__system_property_get("debug.stv.escala", prop) > 0 && prop[0]) {
+		return StvEscalaDeTexto(prop);
+	}
+#endif
+	return 0.0f;
+}
+
+void StvEmitir(const char *linea) {
+#if defined(__ANDROID__)
+	__android_log_print(ANDROID_LOG_INFO, "STV", "%s", linea);
+#else
+	printf("%s\n", linea);
+	fflush(stdout);
+#endif
+}
+
+}  // namespace
+
 static size_t FormatFramebufferName(const VirtualFramebuffer *vfb, char *tag, size_t len) {
 	return snprintf(tag, len, "FB_%08x_%08x_%dx%d_%s", vfb->fb_address, vfb->z_address, vfb->bufferWidth, vfb->bufferHeight, GeBufferFormatToString(vfb->fb_format));
 }
@@ -97,6 +162,40 @@ bool FramebufferManagerCommon::UpdateRenderSize(int msaaLevel) {
 	renderWidth_ = (float)PSP_CoreParameter().renderWidth;
 	renderHeight_ = (float)PSP_CoreParameter().renderHeight;
 	renderScaleFactor_ = (float)PSP_CoreParameter().renderScaleFactor;
+
+	// STV_ESCALA_v1: escala fraccional de render. La prop se lee UNA sola vez
+	// por proceso (static const): conmutarla exige reiniciar el juego, igual
+	// que las demas palancas STV — asi ningun vfb vivo arrastra un factor
+	// distinto del que reciben los que nacen despues.
+	//
+	// NOTA: PSP_CoreParameter().renderScaleFactor (la config entera del
+	// usuario) NO se toca — el pisado vive solo en renderScaleFactor_ y en los
+	// vfb que se creen a partir de aca.
+	static const float stvEscala = StvResolverEscala();
+	if (stvEscala != 0.0f) {
+		const int configEntera = PSP_CoreParameter().renderScaleFactor;
+		if (configEntera == 2) {
+			// Solo pisa el x2: el objetivo es recortar fill de GPU respecto
+			// de 960x544 sin caer a x1. 1.25/1.5/1.75 son exactos en float
+			// binario, asi que == 1.0f y los redondeos quedan deterministas.
+			renderScaleFactor_ = stvEscala;
+		}
+		// Log de arranque estilo de la casa; con guard para no spamear si
+		// UpdateRenderSize reentra sin cambio (resize de ventana, MSAA, etc).
+		static float stvAvisada = -1.0f;
+		if (stvAvisada != renderScaleFactor_) {
+			stvAvisada = renderScaleFactor_;
+			char b[128];
+			if (configEntera == 2) {
+				snprintf(b, sizeof(b), "STV: escala ACTIVA %g (%dx%d) (%s)",
+					stvEscala, StvEscalarDim(480.0f, stvEscala), StvEscalarDim(272.0f, stvEscala), kStvEscalaMarca);
+			} else {
+				snprintf(b, sizeof(b), "STV: escala IGNORADA (renderScaleFactor=%d, no 2) (%s)",
+					configEntera, kStvEscalaMarca);
+			}
+			StvEmitir(b);
+		}
+	}
 	msaaLevel_ = msaaLevel;
 
 	bloomHack_ = effectiveBloomHack;
@@ -506,11 +605,14 @@ VirtualFramebuffer *FramebufferManagerCommon::DoSetRenderFrameBuffer(Framebuffer
 			vfb->lastFrameNewSize = gpuStats.numFlips;
 		}
 
-		if (!resized && renderScaleFactor_ != 1 && vfb->renderScaleFactor == 1) {
+		// STV_ESCALA_v1: comparaciones contra 1.0f (exacto en float). Los
+		// factores posibles son 1.0f o renderScaleFactor_, nunca un producto,
+		// asi que la igualdad es determinista.
+		if (!resized && renderScaleFactor_ != 1.0f && vfb->renderScaleFactor == 1.0f) {
 			// Might be time to change this framebuffer - have we used depth?
 			if ((vfb->usageFlags & FB_USAGE_COLOR_MIXED_DEPTH) && !PSP_CoreParameter().compat.flags().ForceLowerResolutionForEffectsOn) {
 				ResizeFramebufFBO(vfb, vfb->width, vfb->height, true);
-				_assert_(vfb->renderScaleFactor != 1);
+				_assert_(vfb->renderScaleFactor != 1.0f);
 			}
 		}
 	}
@@ -859,13 +961,16 @@ void FramebufferManagerCommon::CopyToColorFromOverlappingFramebuffers(VirtualFra
 
 		// TODO: Try to bound the blit using gstate_c.vertBounds like depal does.
 
-		int srcWidth = src->width * src->renderScaleFactor;
-		int srcHeight = src->height * src->renderScaleFactor;
-		int dstWidth = src->width * dst->renderScaleFactor;
-		int dstHeight = src->height * dst->renderScaleFactor;
+		// STV_ESCALA_v1: rects con el redondeo unico (StvEscalarDim), mismo
+		// tratamiento en src y dst — sin drift entre iteraciones del feedback.
+		// Los offsets pueden ser negativos: por eso el helper usa floorf.
+		int srcWidth = StvEscalarDim(src->width, src->renderScaleFactor);
+		int srcHeight = StvEscalarDim(src->height, src->renderScaleFactor);
+		int dstWidth = StvEscalarDim(src->width, dst->renderScaleFactor);
+		int dstHeight = StvEscalarDim(src->height, dst->renderScaleFactor);
 
-		int dstX1 = -source.xOffset * dst->renderScaleFactor;
-		int dstY1 = -source.yOffset * dst->renderScaleFactor;
+		int dstX1 = StvEscalarDim(-source.xOffset, dst->renderScaleFactor);
+		int dstY1 = StvEscalarDim(-source.yOffset, dst->renderScaleFactor);
 		int dstX2 = dstX1 + dstWidth;
 		int dstY2 = dstY1 + dstHeight;
 
@@ -1850,13 +1955,16 @@ void FramebufferManagerCommon::ResizeFramebufFBO(VirtualFramebuffer *vfb, int w,
 	}
 
 	if (force1x && g_Config.iInternalResolution != 1) {
-		vfb->renderScaleFactor = 1;
+		vfb->renderScaleFactor = 1.0f;  // STV_ESCALA_v1: literal float
 		vfb->renderWidth = vfb->bufferWidth;
 		vfb->renderHeight = vfb->bufferHeight;
 	} else {
+		// STV_ESCALA_v1: tamanos de framebuffer con el redondeo unico. Con
+		// strides PSP multiplos de 4 y factores N/4 el producto es exacto
+		// (512*1.5=768) y el redondeo es identidad.
 		vfb->renderScaleFactor = renderScaleFactor_;
-		vfb->renderWidth = (u16)(vfb->bufferWidth * renderScaleFactor_);
-		vfb->renderHeight = (u16)(vfb->bufferHeight * renderScaleFactor_);
+		vfb->renderWidth = (u16)StvEscalarDim(vfb->bufferWidth, renderScaleFactor_);
+		vfb->renderHeight = (u16)StvEscalarDim(vfb->bufferHeight, renderScaleFactor_);
 	}
 
 	bool creating = old.bufferWidth == 0;
@@ -2428,8 +2536,9 @@ VirtualFramebuffer *FramebufferManagerCommon::CreateRAMFramebuffer(uint32_t fbAd
 	vfb->newHeight = vfb->height;
 	vfb->lastFrameNewSize = gpuStats.numFlips;
 	vfb->renderScaleFactor = renderScaleFactor_;
-	vfb->renderWidth = (u16)(vfb->width * renderScaleFactor_);
-	vfb->renderHeight = (u16)(vfb->height * renderScaleFactor_);
+	// STV_ESCALA_v1: tamanos con el redondeo unico (ver ResizeFramebufFBO).
+	vfb->renderWidth = (u16)StvEscalarDim(vfb->width, renderScaleFactor_);
+	vfb->renderHeight = (u16)StvEscalarDim(vfb->height, renderScaleFactor_);
 	vfb->bufferWidth = vfb->width;
 	vfb->bufferHeight = vfb->height;
 	vfb->fb_format = format == GE_FORMAT_DEPTH16 ? GE_FORMAT_8888 : format;
@@ -2488,7 +2597,7 @@ VirtualFramebuffer *FramebufferManagerCommon::FindDownloadTempBuffer(VirtualFram
 		nvfb->height = vfb->height;
 		nvfb->renderWidth = vfb->bufferWidth;
 		nvfb->renderHeight = vfb->bufferHeight;
-		nvfb->renderScaleFactor = 1;  // For readbacks we resize to the original size, of course.
+		nvfb->renderScaleFactor = 1.0f;  // For readbacks we resize to the original size, of course. (STV_ESCALA_v1: literal float; GoW no usa readbacks pero el camino queda correcto)
 		nvfb->bufferWidth = vfb->bufferWidth;
 		nvfb->bufferHeight = vfb->bufferHeight;
 		nvfb->fb_format = vfb->fb_format;
@@ -2781,18 +2890,20 @@ bool FramebufferManagerCommon::NotifyBlockTransferBefore(u32 dstBasePtr, int dst
 			if (pipeline) {
 				const char *pass_name = reinterpretStrings[(int)src->fb_format][(int)dst->fb_format];
 
-				int srcWidth = width * src->renderScaleFactor;
-				int srcHeight = height * src->renderScaleFactor;
-				int dstWidth = width * dst->renderScaleFactor;
-				int dstHeight = height * dst->renderScaleFactor;
+				// STV_ESCALA_v1: rects con el redondeo unico, identico en
+				// src y dst — mismo criterio en las dos puntas del blit.
+				int srcWidth = StvEscalarDim(width, src->renderScaleFactor);
+				int srcHeight = StvEscalarDim(height, src->renderScaleFactor);
+				int dstWidth = StvEscalarDim(width, dst->renderScaleFactor);
+				int dstHeight = StvEscalarDim(height, dst->renderScaleFactor);
 
-				int srcX1 = srcX * src->renderScaleFactor;
-				int srcY1 = srcY * src->renderScaleFactor;
+				int srcX1 = StvEscalarDim(srcX, src->renderScaleFactor);
+				int srcY1 = StvEscalarDim(srcY, src->renderScaleFactor);
 				int srcX2 = srcX1 + srcWidth;
 				int srcY2 = srcY1 + srcHeight;
 
-				int dstX1 = dstX * dst->renderScaleFactor;
-				int dstY1 = dstY * dst->renderScaleFactor;
+				int dstX1 = StvEscalarDim(dstX, dst->renderScaleFactor);
+				int dstY1 = StvEscalarDim(dstY, dst->renderScaleFactor);
 				int dstX2 = dstX1 + dstWidth;
 				int dstY2 = dstY1 + dstHeight;
 
@@ -3065,7 +3176,8 @@ Draw::Framebuffer *FramebufferManagerCommon::GetTempFBO(TempFBO reason, u16 w, u
 
 	bool z_stencil = reason == TempFBO::STENCIL;
 	char name[128];
-	snprintf(name, sizeof(name), "tempfbo_%s_%dx%d", TempFBOReasonToString(reason), w / renderScaleFactor_, h / renderScaleFactor_);
+	// STV_ESCALA_v1: cast al %d — es solo el nombre del FBO, cosmetico.
+	snprintf(name, sizeof(name), "tempfbo_%s_%dx%d", TempFBOReasonToString(reason), (int)(w / renderScaleFactor_), (int)(h / renderScaleFactor_));
 
 	Draw::Framebuffer *fbo = draw_->CreateFramebuffer({ w, h, 1, GetFramebufferLayers(), 0, z_stencil, name });
 	if (!fbo) {
@@ -3139,7 +3251,7 @@ bool FramebufferManagerCommon::GetFramebuffer(u32 fb_address, int fb_stride, GEB
 			tempVfb.bufferHeight = vfb->height;
 			tempVfb.renderWidth = w;
 			tempVfb.renderHeight = h;
-			tempVfb.renderScaleFactor = maxScaleFactor;
+			tempVfb.renderScaleFactor = (float)maxScaleFactor;  // STV_ESCALA_v1: cast explicito int->float (debugger)
 			BlitFramebuffer(&tempVfb, 0, 0, vfb, 0, 0, vfb->width, vfb->height, 0, RASTER_COLOR, "Blit_GetFramebuffer");
 
 			bound = tempFBO;
@@ -3160,7 +3272,7 @@ bool FramebufferManagerCommon::GetFramebuffer(u32 fb_address, int fb_stride, GEB
 	buffer.Allocate(w, h, GE_FORMAT_8888, flipY);
 	bool retval = draw_->CopyFramebufferToMemory(bound, Draw::Aspect::COLOR_BIT, 0, 0, w, h, Draw::DataFormat::R8G8B8A8_UNORM, buffer.GetData(), w, Draw::ReadbackMode::BLOCK, "GetFramebuffer");
 
-	buffer.SetScaleFactor(vfb->renderScaleFactor);
+	buffer.SetScaleFactor((int)(vfb->renderScaleFactor + 0.5f));  // STV_ESCALA_v1: GPUDebugBuffer guarda factor entero (debug); redondeo al mas cercano
 	// Don't need to increment gpu stats for readback count here, this is a debugger-only function.
 
 	// After a readback we'll have flushed and started over, need to dirty a bunch of things to be safe.
@@ -3213,7 +3325,7 @@ bool FramebufferManagerCommon::GetDepthbuffer(u32 fb_address, int fb_stride, u32
 	gstate_c.Dirty(DIRTY_TEXTURE_IMAGE | DIRTY_TEXTURE_PARAMS);
 	// That may have unbound the framebuffer, rebind to avoid crashes when debugging.
 	RebindFramebuffer("RebindFramebuffer - GetDepthbuffer");
-	buffer.SetScaleFactor(vfb->renderScaleFactor);
+	buffer.SetScaleFactor((int)(vfb->renderScaleFactor + 0.5f));  // STV_ESCALA_v1: GPUDebugBuffer guarda factor entero (debug); redondeo al mas cercano
 	return retval;
 }
 
@@ -3288,7 +3400,9 @@ void FramebufferManagerCommon::ReadbackFramebuffer(VirtualFramebuffer *vfb, int 
 	}
 
 	// Note that ReadbackDepthBufferSync can stretch on its own while converting data format, so we don't need to downscale in that case.
-	if (vfb->renderScaleFactor == 1 || channel == RASTER_DEPTH) {
+	// STV_ESCALA_v1: == 1.0f exacto (el factor es 1.0f o renderScaleFactor_,
+	// nunca un producto). GoW no usa readbacks; el camino queda correcto igual.
+	if (vfb->renderScaleFactor == 1.0f || channel == RASTER_DEPTH) {
 		// No need to stretch-blit
 	} else {
 		VirtualFramebuffer *nvfb = FindDownloadTempBuffer(vfb, channel);
@@ -3323,9 +3437,10 @@ void FramebufferManagerCommon::ReadbackFramebuffer(VirtualFramebuffer *vfb, int 
 
 	if (channel == RASTER_DEPTH) {
 		_assert_msg_(vfb && vfb->z_address != 0 && vfb->z_stride != 0, "Depth buffer invalid");
+		// STV_ESCALA_v1: rect del readback de depth con el redondeo unico.
 		ReadbackDepthbuffer(vfb->fbo,
-			x * vfb->renderScaleFactor, y * vfb->renderScaleFactor,
-			w * vfb->renderScaleFactor, h * vfb->renderScaleFactor, (uint16_t *)destPtr, stride, w, h, mode);
+			StvEscalarDim(x, vfb->renderScaleFactor), StvEscalarDim(y, vfb->renderScaleFactor),
+			StvEscalarDim(w, vfb->renderScaleFactor), StvEscalarDim(h, vfb->renderScaleFactor), (uint16_t *)destPtr, stride, w, h, mode);
 	} else {
 		draw_->CopyFramebufferToMemory(vfb->fbo, channel == RASTER_COLOR ? Draw::Aspect::COLOR_BIT : Draw::Aspect::DEPTH_BIT, x, y, w, h, destFormat, destPtr, stride, mode, "ReadbackFramebufferSync");
 	}
@@ -3606,6 +3721,11 @@ void FramebufferManagerCommon::BlitFramebuffer(VirtualFramebuffer *dst, int dstX
 		useCopy = false;
 	}
 
+	// STV_ESCALA_v1: este bloque YA trabajaba con factores float locales (por
+	// el ajuste de bpp); lo unico que cambia es que el producto->int pasa por
+	// el redondeo unico en vez del truncado implicito, mismo criterio en src
+	// y dst. Este es EL blit del feedback de GoW (BlitFramebuffer): src y dst
+	// reciben identico redondeo, asi que no hay drift entre iteraciones.
 	float srcXFactor = src->renderScaleFactor;
 	float srcYFactor = src->renderScaleFactor;
 	const int srcBpp = BufferFormatBytesPerPixel(src->Format(channel));
@@ -3613,10 +3733,10 @@ void FramebufferManagerCommon::BlitFramebuffer(VirtualFramebuffer *dst, int dstX
 		// If we do this, we're kinda in nonsense territory since the actual formats won't match (unless intentionally blitting black or white).
 		srcXFactor = (srcXFactor * bpp) / srcBpp;
 	}
-	int srcX1 = srcX * srcXFactor;
-	int srcX2 = (srcX + w) * srcXFactor;
-	int srcY1 = srcY * srcYFactor;
-	int srcY2 = (srcY + h) * srcYFactor;
+	int srcX1 = StvEscalarDim(srcX, srcXFactor);
+	int srcX2 = StvEscalarDim(srcX + w, srcXFactor);
+	int srcY1 = StvEscalarDim(srcY, srcYFactor);
+	int srcY2 = StvEscalarDim(srcY + h, srcYFactor);
 
 	float dstXFactor = dst->renderScaleFactor;
 	float dstYFactor = dst->renderScaleFactor;
@@ -3625,10 +3745,10 @@ void FramebufferManagerCommon::BlitFramebuffer(VirtualFramebuffer *dst, int dstX
 		// If we do this, we're kinda in nonsense territory since the actual formats won't match (unless intentionally blitting black or white).
 		dstXFactor = (dstXFactor * bpp) / dstBpp;
 	}
-	int dstX1 = dstX * dstXFactor;
-	int dstX2 = (dstX + w) * dstXFactor;
-	int dstY1 = dstY * dstYFactor;
-	int dstY2 = (dstY + h) * dstYFactor;
+	int dstX1 = StvEscalarDim(dstX, dstXFactor);
+	int dstX2 = StvEscalarDim(dstX + w, dstXFactor);
+	int dstY1 = StvEscalarDim(dstY, dstYFactor);
+	int dstY2 = StvEscalarDim(dstY + h, dstYFactor);
 
 	if (src == dst && srcX == dstX && srcY == dstY) {
 		// Let's just skip a copy where the destination is equal to the source.
@@ -3676,7 +3796,7 @@ void FramebufferManagerCommon::BlitUsingRaster(
 	Draw::Framebuffer *src, float srcX1, float srcY1, float srcX2, float srcY2,
 	Draw::Framebuffer *dest, float destX1, float destY1, float destX2, float destY2,
 	bool linearFilter,
-	int scaleFactor,
+	float scaleFactor,  // STV_ESCALA_v1: float — llega al uniform float del shader sin truncarse
 	Draw2DPipeline *pipeline, const char *tag) {
 
 	_dbg_assert_(src);

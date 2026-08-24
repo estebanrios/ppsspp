@@ -309,7 +309,8 @@ Draw2DPipeline *Draw2D::Create2DPipeline(std::function<Draw2DPipelineInfo (Shade
 	};
 }
 
-void Draw2D::Blit(Draw2DPipeline *pipeline, float srcX1, float srcY1, float srcX2, float srcY2, float dstX1, float dstY1, float dstX2, float dstY2, float srcWidth, float srcHeight, float dstWidth, float dstHeight, bool linear, int scaleFactor) {
+// STV_ESCALA_v1: scaleFactor float de punta a punta (ver Draw2D.h).
+void Draw2D::Blit(Draw2DPipeline *pipeline, float srcX1, float srcY1, float srcX2, float srcY2, float dstX1, float dstY1, float dstX2, float dstY2, float srcWidth, float srcHeight, float dstWidth, float dstHeight, bool linear, float scaleFactor) {
 	float dX = 1.0f / (float)dstWidth;
 	float dY = 1.0f / (float)dstHeight;
 	float sX = 1.0f / (float)srcWidth;
@@ -330,7 +331,7 @@ void Draw2D::Blit(Draw2DPipeline *pipeline, float srcX1, float srcY1, float srcX
 	DrawStrip2D(nullptr, vtx, 4, linear, pipeline, srcWidth, srcHeight, scaleFactor);
 }
 
-void Draw2D::DrawStrip2D(Draw::Texture *tex, const Draw2DVertex *verts, int vertexCount, bool linearFilter, Draw2DPipeline *pipeline, float texW, float texH, int scaleFactor) {
+void Draw2D::DrawStrip2D(Draw::Texture *tex, const Draw2DVertex *verts, int vertexCount, bool linearFilter, Draw2DPipeline *pipeline, float texW, float texH, float scaleFactor) {  // STV_ESCALA_v1: scaleFactor float
 	using namespace Draw;
 
 	_dbg_assert_(pipeline);
@@ -345,7 +346,7 @@ void Draw2D::DrawStrip2D(Draw::Texture *tex, const Draw2DVertex *verts, int vert
 	Draw2DUB ub;
 	ub.texSizeX = tex ? tex->Width() : texW;
 	ub.texSizeY = tex ? tex->Height() : texH;
-	ub.scaleFactor = (float)scaleFactor;
+	ub.scaleFactor = scaleFactor;  // STV_ESCALA_v1: ya es float, sin cast que trunque
 
 	DepthScaleFactors zScaleFactors = GetDepthScaleFactors(gstate_c.UseFlags());
 	ub.zScale = zScaleFactors.Scale();

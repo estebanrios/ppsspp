@@ -65,9 +65,12 @@ public:
 
 	Draw2DPipeline *Create2DPipeline(std::function<Draw2DPipelineInfo(ShaderWriter &)> generate);
 
-	void DrawStrip2D(Draw::Texture *tex, const Draw2DVertex *verts, int vertexCount, bool linearFilter, Draw2DPipeline *pipeline, float texW = 0.0f, float texH = 0.0f, int scaleFactor = 0);
+	// STV_ESCALA_v1: scaleFactor pasa a float (era int) — siempre termino en el
+	// uniform float scaleFactor del shader (deswizzle), asi la escala fraccional
+	// llega entera al shader. Los llamadores que pasaban enteros promocionan solos.
+	void DrawStrip2D(Draw::Texture *tex, const Draw2DVertex *verts, int vertexCount, bool linearFilter, Draw2DPipeline *pipeline, float texW = 0.0f, float texH = 0.0f, float scaleFactor = 0.0f);
 
-	void Blit(Draw2DPipeline *pipeline, float srcX1, float srcY1, float srcX2, float srcY2, float dstX1, float dstY1, float dstX2, float dstY2, float srcWidth, float srcHeight, float dstWidth, float dstHeight, bool linear, int scaleFactor);
+	void Blit(Draw2DPipeline *pipeline, float srcX1, float srcY1, float srcX2, float srcY2, float dstX1, float dstY1, float dstX2, float dstY2, float srcWidth, float srcHeight, float dstWidth, float dstHeight, bool linear, float scaleFactor);  // STV_ESCALA_v1: scaleFactor float
 	void Ensure2DResources();
 
 private:

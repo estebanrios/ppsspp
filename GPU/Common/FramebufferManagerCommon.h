@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include <cmath>  // STV_ESCALA_v1: floorf del redondeo de escala
 #include <vector>
 #include <unordered_map>
 
@@ -55,6 +56,29 @@ enum {
 	FB_NON_BUFFERED_MODE = 0,
 	FB_BUFFERED_MODE = 1,
 };
+
+// --- STV_ESCALA_v1: escalas fraccionales de render ---------------------------
+//
+// El factor de escala del render (antes int/u8) pasa a float para admitir
+// x1.25/x1.5/x1.75: God of War esta limitado por fill de GPU a x2 y estas
+// escalas intermedias recortan el fill sin caer a x1. Los valores validos
+// (1.0, 1.25, 1.5, 1.75, 2.0, 3.0...) son todos exactos en binario, asi que
+// las comparaciones == 1.0f y el redondeo de productos son deterministas.
+//
+// StvEscalarDim es EL UNICO redondeo permitido para producto pixel*factor que
+// termina en un entero (tamanos de framebuffer, rects de blits/copias). Regla:
+// mismo redondeo en src y dst de cada blit = sin drift entre iteraciones del
+// feedback (self-texturing) de GoW. Con strides PSP multiplos de 4 y factores
+// N/4 el producto es exacto y el redondeo es identidad; el helper existe por
+// los rects arbitrarios (offsets de dibujo, bounds de vertices).
+//
+// floorf(x + 0.5f) y no (int)(x + 0.5f): el cast trunca hacia cero, y con
+// coordenadas NEGATIVAS (p.ej. -source.xOffset * factor en los CopySource)
+// romperia la identidad para productos exactos ((int)(-24.0 + 0.5) = -23).
+// floorf redondea half-up parejo en todo el rango.
+inline int StvEscalarDim(float v, float factor) {
+	return (int)floorf(v * factor + 0.5f);
+}
 
 namespace Draw {
 	class Framebuffer;
@@ -109,7 +133,10 @@ struct VirtualFramebuffer {
 	u16 safeHeight;
 
 	// The scale factor at which we are rendering (to achieve higher resolution).
-	u8 renderScaleFactor;
+	// STV_ESCALA_v1: float (era u8) para las escalas fraccionales x1.25/x1.5/x1.75.
+	// Siempre vale 1.0f o el renderScaleFactor_ del manager; no se serializa en
+	// savestates (los vfbs se reconstruyen al cargar).
+	float renderScaleFactor;
 
 	u16 usageFlags;
 
@@ -485,7 +512,7 @@ public:
 		Draw::Framebuffer *src, float srcX1, float srcY1, float srcX2, float srcY2,
 		Draw::Framebuffer *dest, float destX1, float destY1, float destX2, float destY2,
 		bool linearFilter,
-		int scaleFactor,  // usually unused, except for swizzle...
+		float scaleFactor,  // usually unused, except for swizzle... (STV_ESCALA_v1: float — termina en un uniform float del shader, la fraccion no se pierde)
 		Draw2DPipeline *pipeline, const char *tag);
 
 	void ReleasePipelines();
@@ -641,7 +668,10 @@ protected:
 	float renderHeight_ = 0.0f;
 
 	int msaaLevel_ = 0;
-	int renderScaleFactor_ = 1;
+	// STV_ESCALA_v1: float (era int). Con la escala fraccional activa vale
+	// 1.25f/1.5f/1.75f en lugar del 2 entero de la config; en cualquier otro
+	// caso es la config entera exacta (1.0f, 2.0f, 3.0f...).
+	float renderScaleFactor_ = 1.0f;
 	int pixelWidth_ = 0;
 	int pixelHeight_ = 0;
 	int bloomHack_ = 0;
