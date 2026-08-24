@@ -332,6 +332,9 @@ public:
 	// el resto en 0) sin lanzador especial. La prop debug.stv.escala la PISA
 	// cuando esta seteada (el A/B del banco manda sobre el ini).
 	int iStvEscala;
+	// STV F6: el worker del GE (hilo de display lists en otro nucleo).
+	// PER_GAME; la prop debug.stv.ge la PISA cuando esta seteada (el banco).
+	bool bStvWorkerGE;
 	int iAnisotropyLevel;  // 0 - 5, powers of 2: 0 = 1x = no aniso
 	int iMultiSampleLevel;
 	int bHighQualityDepth;

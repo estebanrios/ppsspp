@@ -69,7 +69,12 @@ static int ResolverNivel() {
 		return NivelDeTexto(prop);
 	}
 #endif
-	return kNivelDefecto;
+	// STV parche 10: sin env ni prop manda la config (checkbox "Hilo del GE
+	// (STV)" en Graficos, PER_GAME). El usuario solo elige on/off: on = nivel
+	// 2 (asincrono, el que rinde); el nivel 1 es de validacion y queda para
+	// la prop del banco. PorVblank ya relee esto cada cuadro y conmuta en
+	// frontera segura: el checkbox actua en caliente.
+	return g_Config.bStvWorkerGE ? 2 : kNivelDefecto;
 }
 
 static void Emitir(const char *linea) {

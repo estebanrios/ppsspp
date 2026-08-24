@@ -336,9 +336,36 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
 		}
 	}
 
-	static const char *internalResolutions[] = { "Auto (1:1)", "1x PSP", "2x PSP", "3x PSP", "4x PSP", "5x PSP", "6x PSP", "7x PSP", "8x PSP", "9x PSP", "10x PSP" };
-	PopupMultiChoice *resolutionChoice = graphicsSettings->Add(new PopupMultiChoice(&g_Config.iInternalResolution, gr->T("Rendering Resolution"), internalResolutions, 0, ARRAY_SIZE(internalResolutions), I18NCat::GRAPHICS, screenManager()));
+	// STV (parche 10, pedido del usuario): las escalas fraccionales viven EN
+	// el selector nativo, entre 1x y 2x, marcadas "(STV)". El PopupMultiChoice
+	// exige un int contiguo, asi que edita un indice estatico mapeado a los
+	// pares (iInternalResolution, iStvEscala); las entradas STV son x2 con
+	// escala 125/150/175 (el runtime solo escala sobre base x2). Ambas claves
+	// son PER_GAME: "Crear config. del juego" deja la resolucion por titulo.
+	static const char *internalResolutions[] = { "Auto (1:1)", "1x PSP", "1.25x PSP (STV)", "1.5x PSP (STV)", "1.75x PSP (STV)", "2x PSP", "3x PSP", "4x PSP", "5x PSP", "6x PSP", "7x PSP", "8x PSP", "9x PSP", "10x PSP" };
+	static const int stvResMapInternal[] = { 0, 1, 2, 2, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+	static const int stvResMapEscala[]   = { 0, 0, 125, 150, 175, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+	static int stvResIndice = 0;
+	{
+		stvResIndice = 0;
+		for (int i = 0; i < (int)ARRAY_SIZE(stvResMapInternal); i++) {
+			if (stvResMapInternal[i] == g_Config.iInternalResolution &&
+			    stvResMapEscala[i] == g_Config.iStvEscala) {
+				stvResIndice = i;
+				break;
+			}
+			// Sin par exacto (p.ej. escala configurada a mano con otra base):
+			// cae en la entrada de la resolucion entera.
+			if (stvResMapInternal[i] == g_Config.iInternalResolution && stvResMapEscala[i] == 0) {
+				stvResIndice = i;
+			}
+		}
+	}
+	PopupMultiChoice *resolutionChoice = graphicsSettings->Add(new PopupMultiChoice(&stvResIndice, gr->T("Rendering Resolution"), internalResolutions, 0, ARRAY_SIZE(internalResolutions), I18NCat::GRAPHICS, screenManager()));
 	resolutionChoice->OnChoice.Add([](UI::EventParams &e) {
+		const int i = stvResIndice >= 0 && stvResIndice < (int)ARRAY_SIZE(stvResMapInternal) ? stvResIndice : 0;
+		g_Config.iInternalResolution = stvResMapInternal[i];
+		g_Config.iStvEscala = stvResMapEscala[i];
 		if (g_Config.iAndroidHwScale == 1) {
 			System_RecreateActivity();
 		}
@@ -349,35 +376,11 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
 		return !g_Config.bSoftwareRendering && !g_Config.bSkipBufferEffects;
 	});
 
-	// STV_ESCALA_v1: el selector visible de la escala fraccional (pedido del
-	// usuario). g_Config.iStvEscala guarda 0/125/150/175 (el formato del ini
-	// per-game YA horneado en las imagenes — no se cambia la semantica);
-	// PopupMultiChoice exige valores contiguos, asi que la UI edita un indice
-	// estatico 0-3 sincronizado a mano en ambos sentidos. Es PER_GAME: con
-	// "Crear config. del juego" el ajuste queda por titulo (GoW viene de
-	// fabrica en x1.5). Sin i18n a proposito: fork propio, consola en espanol.
-	{
-		static const char *stvEscalas[] = { "Apagada (usa la de arriba)", "x1.25 (600x340)", "x1.5 (720x408)", "x1.75 (840x476)" };
-		static int stvEscalaIndice = 0;
-		switch (g_Config.iStvEscala) {
-		case 125: stvEscalaIndice = 1; break;
-		case 150: stvEscalaIndice = 2; break;
-		case 175: stvEscalaIndice = 3; break;
-		default: stvEscalaIndice = 0; break;
-		}
-		PopupMultiChoice *stvEscalaChoice = graphicsSettings->Add(new PopupMultiChoice(&stvEscalaIndice, "Escala fraccional (STV)", stvEscalas, 0, ARRAY_SIZE(stvEscalas), I18NCat::NONE, screenManager()));
-		stvEscalaChoice->OnChoice.Add([](UI::EventParams &e) {
-			static const int valores[] = { 0, 125, 150, 175 };
-			g_Config.iStvEscala = valores[stvEscalaIndice & 3];
-			Reporting::UpdateConfig();
-			System_PostUIMessage(UIMessage::GPU_RENDER_RESIZED);
-		});
-		stvEscalaChoice->SetEnabledFunc([] {
-			// Solo modifica el x2 (el diseno del parche); con otra resolucion
-			// base queda gris, igual que la ignora el runtime.
-			return !g_Config.bSoftwareRendering && !g_Config.bSkipBufferEffects && g_Config.iInternalResolution == 2;
-		});
-	}
+	// STV F6: el worker del GE, on/off para el usuario (PER_GAME). Conmutable
+	// en caliente: PorVblank relee la config cada cuadro y cambia en frontera
+	// segura. La prop debug.stv.ge del banco lo pisa cuando esta seteada.
+	graphicsSettings->Add(new CheckBox(&g_Config.bStvWorkerGE, "Hilo del GE en otro nucleo (STV)"));
+
 
 	int deviceType = System_GetPropertyInt(SYSPROP_DEVICE_TYPE);
 
