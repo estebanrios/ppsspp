@@ -21,6 +21,7 @@
 #include "Common/Profiler/Profiler.h"
 #include "GPU/Common/SplineCommon.h"
 #include "GPU/Common/DrawEngineCommon.h"
+#include "GPU/Common/StvDiagVaciados.h"
 #include "GPU/Common/SoftwareTransformCommon.h"
 #include "GPU/ge_constants.h"
 #include "GPU/GPUState.h"  // only needed for UVScale stuff
@@ -578,8 +579,10 @@ void DrawEngineCommon::SubmitCurve(const void *control_points, const void *indic
 	if (output.count)
 		DispatchSubmitPrim(output.vertices, output.indices, PatchPrimToPrim(surface.primType), output.count, vertTypeID, true, &generatedBytesRead);
 
-	if (flushOnParams_)
+	if (flushOnParams_) {
+		stvdiag::g_causa = stvdiag::CAUSA_CURVA;
 		Flush();
+	}
 
 	if (origVertType & GE_VTYPE_TC_MASK) {
 		gstate_c.uv = prevUVScale;

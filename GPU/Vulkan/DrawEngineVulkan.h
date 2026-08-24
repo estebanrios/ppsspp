@@ -41,6 +41,7 @@
 #include "GPU/Common/IndexGenerator.h"
 #include "GPU/Common/VertexDecoderCommon.h"
 #include "GPU/Common/DrawEngineCommon.h"
+#include "GPU/Common/StvDiagVaciados.h"
 #include "GPU/Common/GPUStateUtils.h"
 #include "GPU/Vulkan/StateMappingVulkan.h"
 #include "GPU/Vulkan/VulkanRenderManager.h"
@@ -122,6 +123,7 @@ public:
 		// Decode any pending vertices. And also flush while we're at it, for simplicity.
 		// It might be possible to only decode like in the other backends, but meh, it can't matter.
 		// Issue #10095 has a nice example of where this is required.
+		stvdiag::g_causa = stvdiag::CAUSA_FIN_DIFERIDO;
 		Flush();
 	}
 

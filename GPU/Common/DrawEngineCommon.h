@@ -24,6 +24,7 @@
 
 #include "GPU/Math3D.h"
 #include "GPU/GPUState.h"
+#include "GPU/Common/StvDiagVaciados.h"
 #include "GPU/GPUDefinitions.h"
 #include "GPU/Common/GPUStateUtils.h"
 #include "GPU/Common/IndexGenerator.h"
@@ -213,6 +214,8 @@ protected:
 	}
 
 	inline void ResetAfterDrawInline() {
+		// STV: unico punto por el que pasan TODOS los cortes reales de lote.
+		stvdiag::AlCortar(numDrawInds_, vertexCountInDrawCalls_, numDecodedVerts_);
 		gpuStats.numFlushes++;
 		gpuStats.numDrawCalls += numDrawInds_;
 		gpuStats.numVertexDecodes += numDrawVerts_;

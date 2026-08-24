@@ -14,6 +14,7 @@
 #include "GPU/GeDisasm.h"
 #include "GPU/GPU.h"
 #include "GPU/GPUCommon.h"
+#include "GPU/Common/StvDiagVaciados.h"
 #include "GPU/GPUState.h"
 #include "Core/Config.h"
 #include "Core/Core.h"
@@ -997,6 +998,7 @@ void GPUCommon::Execute_Ret(u32 op, u32 diff) {
 void GPUCommon::Execute_End(u32 op, u32 diff) {
 	if (flushOnParams_) {
 		drawEngineCommon_->FlushQueuedDepth();
+		stvdiag::g_causa = stvdiag::CAUSA_FIN_LISTA;
 		Flush();
 	}
 
@@ -1346,6 +1348,7 @@ void GPUCommon::FlushImm() {
 	bool changed = texturing != prevTexturing || cullEnable != prevCullEnable || dither != prevDither;
 	changed = changed || prevShading != shading || prevFog != fog;
 	if (changed) {
+		stvdiag::g_causa = stvdiag::CAUSA_IMM_ANTES;
 		Flush();
 		gstate.antiAliasEnable = (GE_CMD_ANTIALIASENABLE << 24) | (int)antialias;
 		gstate.shademodel = (GE_CMD_SHADEMODE << 24) | (int)shading;
@@ -1361,6 +1364,7 @@ void GPUCommon::FlushImm() {
 	immFirstSent_ = true;
 
 	if (changed) {
+		stvdiag::g_causa = stvdiag::CAUSA_IMM_DESPUES;
 		Flush();
 		gstate.antiAliasEnable = (GE_CMD_ANTIALIASENABLE << 24) | (int)prevAntialias;
 		gstate.shademodel = (GE_CMD_SHADEMODE << 24) | (int)prevShading;
@@ -1387,6 +1391,7 @@ void GPUCommon::FastLoadBoneMatrix(u32 target) {
 
 	if (!g_Config.bSoftwareSkinning) {
 		if (flushOnParams_) {
+			stvdiag::g_causa = stvdiag::CAUSA_MTX_BONE_RAPIDA;
 			Flush();
 		}
 		gstate_c.Dirty(uniformsToDirty);

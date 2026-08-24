@@ -29,6 +29,7 @@
 #include "Core/Config.h"
 #include "GPU/GPUCommon.h"
 #include "GPU/Common/DrawEngineCommon.h"
+#include "GPU/Common/StvDiagVaciados.h"
 #include "GPU/Common/SplineCommon.h"
 #include "GPU/Common/DepthRaster.h"
 #include "GPU/Common/VertexDecoderCommon.h"
@@ -155,6 +156,7 @@ void DrawEngineCommon::DispatchSubmitImm(GEPrimitiveType prim, TransformedVertex
 	bool clockwise = !gstate.isCullEnabled() || gstate.getCullMode() == cullMode;
 	VertexDecoder *dec = GetVertexDecoder(vertTypeID);
 	SubmitPrim(&temp[0], nullptr, prim, vertexCount, dec, vertTypeID, clockwise, &bytesRead);
+	stvdiag::g_causa = stvdiag::CAUSA_IMM_DESPACHO;
 	Flush();
 
 	if (!prevThrough) {
@@ -660,6 +662,7 @@ int DrawEngineCommon::ExtendNonIndexedPrim(const uint32_t *cmd, const uint32_t *
 
 void DrawEngineCommon::SkipPrim(GEPrimitiveType prim, int vertexCount, const VertexDecoder *dec, u32 vertTypeID, int *bytesRead) {
 	if (!indexGen.PrimCompatible(prevPrim_, prim)) {
+		stvdiag::g_causa = stvdiag::CAUSA_PRIM_INCOMPAT_SALTO;
 		Flush();
 	}
 
@@ -679,8 +682,18 @@ void DrawEngineCommon::SkipPrim(GEPrimitiveType prim, int vertexCount, const Ver
 
 // vertTypeID is the vertex type but with the UVGen mode smashed into the top bits.
 bool DrawEngineCommon::SubmitPrim(const void *verts, const void *inds, GEPrimitiveType prim, int vertexCount, const VertexDecoder *dec, u32 vertTypeID, bool clockwise, int *bytesRead) {
-	if (!indexGen.PrimCompatible(prevPrim_, prim) || numDrawVerts_ >= MAX_DEFERRED_DRAW_VERTS || numDrawInds_ >= MAX_DEFERRED_DRAW_INDS || vertexCountInDrawCalls_ + vertexCount > VERTEX_BUFFER_MAX) {
-		Flush();
+	// STV: misma condicion y mismo cortocircuito que upstream, abierta en sus
+	// cuatro razones para poder atribuirlas por separado.
+	{
+		uint16_t stvCausa = 0;
+		if (!indexGen.PrimCompatible(prevPrim_, prim)) stvCausa = stvdiag::CAUSA_PRIM_INCOMPAT;
+		else if (numDrawVerts_ >= MAX_DEFERRED_DRAW_VERTS) stvCausa = stvdiag::CAUSA_TOPE_VERTS;
+		else if (numDrawInds_ >= MAX_DEFERRED_DRAW_INDS) stvCausa = stvdiag::CAUSA_TOPE_INDS;
+		else if (vertexCountInDrawCalls_ + vertexCount > VERTEX_BUFFER_MAX) stvCausa = stvdiag::CAUSA_TOPE_BUFFER;
+		if (stvCausa) {
+			stvdiag::g_causa = stvCausa;
+			Flush();
+		}
 	}
 	_dbg_assert_(numDrawVerts_ < MAX_DEFERRED_DRAW_VERTS);
 	_dbg_assert_(numDrawInds_ < MAX_DEFERRED_DRAW_INDS);
@@ -775,6 +788,7 @@ bool DrawEngineCommon::SubmitPrim(const void *verts, const void *inds, GEPrimiti
 	if (prim == GE_PRIM_RECTANGLES && (gstate.getTextureAddress(0) & 0x3FFFFFFF) == (gstate.getFrameBufAddress() & 0x3FFFFFFF)) {
 		// This prevents issues with consecutive self-renders in Ridge Racer.
 		gstate_c.Dirty(DIRTY_TEXTURE_PARAMS);
+		stvdiag::g_causa = stvdiag::CAUSA_AUTOTEXTURA;
 		Flush();
 	}
 	return true;

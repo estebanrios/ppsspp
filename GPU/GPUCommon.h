@@ -12,6 +12,7 @@
 #include "GPU/Debugger/Record.h"
 #include "GPU/Debugger/Breakpoints.h"
 #include "GPU/GPUDefinitions.h"
+#include "GPU/Common/StvDiagVaciados.h"
 #include "GPU/Common/GPUDebugInterface.h"
 
 #if defined(__ANDROID__)
@@ -284,6 +285,7 @@ protected:
 		// Prim == RECTANGLES can cause CanUseHardwareTransform to flip, so we need to dirty.
 		// Also, culling may be affected so dirty the raster state.
 		if (IsTrianglePrim(prim) != IsTrianglePrim(lastPrim_)) {
+			stvdiag::g_causa = stvdiag::CAUSA_TIPO_DIBUJO;
 			Flush();
 			gstate_c.Dirty(DIRTY_RASTER_STATE | DIRTY_VERTEXSHADER_STATE | DIRTY_GEOMETRYSHADER_STATE);
 			lastPrim_ = prim;

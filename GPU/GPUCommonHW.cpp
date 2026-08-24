@@ -9,6 +9,7 @@
 #include "Core/Util/PPGeDraw.h"
 
 #include "GPU/GPUCommonHW.h"
+#include "GPU/Common/StvDiagVaciados.h"
 #include "GPU/Common/SplineCommon.h"
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/TextureCacheCommon.h"
@@ -522,6 +523,7 @@ void GPUCommonHW::CheckFlushOp(int cmd, u32 diff) {
 		if (dumpThisFrame_) {
 			NOTICE_LOG(Log::G3D, "================ FLUSH ================");
 		}
+		stvdiag::g_causa = stvdiag::CAUSA_INTERPRETE_LENTO;
 		drawEngineCommon_->Flush();
 	}
 }
@@ -533,6 +535,7 @@ void GPUCommonHW::PreExecuteOp(u32 op, u32 diff) {
 void GPUCommonHW::PrepareCopyDisplayToOutput(const DisplayLayoutConfig &config) {
 	drawEngineCommon_->FlushQueuedDepth();
 	// Flush anything left over.
+	stvdiag::g_causa = stvdiag::CAUSA_PRESENTAR;
 	drawEngineCommon_->Flush();
 
 	shaderManager_->DirtyLastShader();
@@ -860,6 +863,7 @@ void GPUCommonHW::FastRunLoop(DisplayList &list) {
 		} else {
 			uint64_t flags = info.flags;
 			if (flags & FLAG_FLUSHBEFOREONCHANGE) {
+				stvdiag::g_causa = (uint16_t)cmd;  // STV: la causa ES el comando GE
 				drawEngineCommon_->Flush();
 			}
 			gstate.cmdmem[cmd] = op;
@@ -895,6 +899,7 @@ void GPUCommonHW::Execute_VertexTypeSkinning(u32 op, u32 diff) {
 	if (diff & ~GE_VTYPE_WEIGHTCOUNT_MASK) {
 		// Restore and flush
 		gstate.vertType ^= diff;
+		stvdiag::g_causa = stvdiag::CAUSA_VERTEXTYPE_SKIN;
 		Flush();
 		gstate.vertType ^= diff;
 		// In this case, we may be doing weights and morphs.
@@ -1284,6 +1289,7 @@ bail:
 		// flush back cull mode
 		if (cullMode != gstate.getCullMode()) {
 			// We rewrote everything to the old cull mode, so flush first.
+			stvdiag::g_causa = stvdiag::CAUSA_PRIM_CULL_FLIP;
 			drawEngineCommon_->Flush();
 
 			// Now update things for next time.
@@ -1337,8 +1343,10 @@ void GPUCommonHW::Execute_Bezier(u32 op, u32 diff) {
 	}
 
 	// Can't flush after setting gstate_c.submitType below since it'll be a mess - it must be done already.
-	if (flushOnParams_)
+	if (flushOnParams_) {
+		stvdiag::g_causa = stvdiag::CAUSA_BEZIER;
 		drawEngineCommon_->Flush();
+	}
 
 	Spline::BezierSurface surface;
 	surface.tess_u = gstate.getPatchDivisionU();
@@ -1413,8 +1421,10 @@ void GPUCommonHW::Execute_Spline(u32 op, u32 diff) {
 	}
 
 	// Can't flush after setting gstate_c.submitType below since it'll be a mess - it must be done already.
-	if (flushOnParams_)
+	if (flushOnParams_) {
+		stvdiag::g_causa = stvdiag::CAUSA_SPLINE;
 		drawEngineCommon_->Flush();
+	}
 
 	Spline::SplineSurface surface;
 	surface.tess_u = gstate.getPatchDivisionU();
@@ -1456,6 +1466,7 @@ void GPUCommonHW::Execute_Spline(u32 op, u32 diff) {
 
 void GPUCommonHW::Execute_BlockTransferStart(u32 op, u32 diff) {
 	drawEngineCommon_->FlushQueuedDepth();
+	stvdiag::g_causa = stvdiag::CAUSA_BLOCKTRANSFER;
 	Flush();
 
 	PROFILE_THIS_SCOPE("block");  // don't include the flush in the profile, would be misleading.
@@ -1490,6 +1501,7 @@ void GPUCommonHW::Execute_TexLevel(u32 op, u32 diff) {
 		gstate_c.Dirty(DIRTY_MIPBIAS);
 	}
 	if (gstate.getTexLevelMode() != GE_TEXLEVEL_MODE_AUTO && (0x00FF0000 & gstate.texlevel) != 0) {
+		stvdiag::g_causa = stvdiag::CAUSA_TEXLEVEL;
 		Flush();
 	}
 
@@ -1526,6 +1538,7 @@ void GPUCommonHW::Execute_WorldMtxNum(u32 op, u32 diff) {
 		while ((src[i] >> 24) == GE_CMD_WORLDMATRIXDATA) {
 			const u32 newVal = src[i] << 8;
 			if (dst[i] != newVal) {
+				stvdiag::g_causa = stvdiag::CAUSA_MTX_WORLD;
 				Flush();
 				dst[i] = newVal;
 				gstate_c.Dirty(DIRTY_WORLDMATRIX);
@@ -1549,6 +1562,7 @@ void GPUCommonHW::Execute_WorldMtxData(u32 op, u32 diff) {
 	int num = gstate.worldmtxnum & 0x00FFFFFF;
 	u32 newVal = op << 8;
 	if (num < 12 && newVal != ((const u32 *)gstate.worldMatrix)[num]) {
+		stvdiag::g_causa = stvdiag::CAUSA_MTX_WORLD_LENTO;
 		Flush();
 		((u32 *)gstate.worldMatrix)[num] = newVal;
 		gstate_c.Dirty(DIRTY_WORLDMATRIX);
@@ -1579,6 +1593,7 @@ void GPUCommonHW::Execute_ViewMtxNum(u32 op, u32 diff) {
 		while ((src[i] >> 24) == GE_CMD_VIEWMATRIXDATA) {
 			const u32 newVal = src[i] << 8;
 			if (dst[i] != newVal) {
+				stvdiag::g_causa = stvdiag::CAUSA_MTX_VIEW;
 				Flush();
 				dst[i] = newVal;
 				gstate_c.Dirty(DIRTY_VIEWMATRIX | DIRTY_CULL_PLANES);
@@ -1602,6 +1617,7 @@ void GPUCommonHW::Execute_ViewMtxData(u32 op, u32 diff) {
 	int num = gstate.viewmtxnum & 0x00FFFFFF;
 	u32 newVal = op << 8;
 	if (num < 12 && newVal != ((const u32 *)gstate.viewMatrix)[num]) {
+		stvdiag::g_causa = stvdiag::CAUSA_MTX_VIEW_LENTO;
 		Flush();
 		((u32 *)gstate.viewMatrix)[num] = newVal;
 		gstate_c.Dirty(DIRTY_VIEWMATRIX | DIRTY_CULL_PLANES);
@@ -1632,6 +1648,7 @@ void GPUCommonHW::Execute_ProjMtxNum(u32 op, u32 diff) {
 		while ((src[i] >> 24) == GE_CMD_PROJMATRIXDATA) {
 			const u32 newVal = src[i] << 8;
 			if (dst[i] != newVal) {
+				stvdiag::g_causa = stvdiag::CAUSA_MTX_PROJ;
 				Flush();
 				dst[i] = newVal;
 				gstate_c.Dirty(DIRTY_PROJMATRIX | DIRTY_CULL_PLANES);
@@ -1655,6 +1672,7 @@ void GPUCommonHW::Execute_ProjMtxData(u32 op, u32 diff) {
 	int num = gstate.projmtxnum & 0x00FFFFFF;
 	u32 newVal = op << 8;
 	if (num < 16 && newVal != ((const u32 *)gstate.projMatrix)[num]) {
+		stvdiag::g_causa = stvdiag::CAUSA_MTX_PROJ_LENTO;
 		Flush();
 		((u32 *)gstate.projMatrix)[num] = newVal;
 		gstate_c.Dirty(DIRTY_PROJMATRIX | DIRTY_CULL_PLANES);
@@ -1686,6 +1704,7 @@ void GPUCommonHW::Execute_TgenMtxNum(u32 op, u32 diff) {
 		while ((src[i] >> 24) == GE_CMD_TGENMATRIXDATA) {
 			const u32 newVal = src[i] << 8;
 			if (dst[i] != newVal) {
+				stvdiag::g_causa = stvdiag::CAUSA_MTX_TGEN;
 				Flush();
 				dst[i] = newVal;
 				// We check the matrix to see if we need projection.
@@ -1710,6 +1729,7 @@ void GPUCommonHW::Execute_TgenMtxData(u32 op, u32 diff) {
 	int num = gstate.texmtxnum & 0x00FFFFFF;
 	u32 newVal = op << 8;
 	if (num < 12 && newVal != ((const u32 *)gstate.tgenMatrix)[num]) {
+		stvdiag::g_causa = stvdiag::CAUSA_MTX_TGEN_LENTO;
 		Flush();
 		((u32 *)gstate.tgenMatrix)[num] = newVal;
 		gstate_c.Dirty(DIRTY_TEXMATRIX | DIRTY_FRAGMENTSHADER_STATE);  // We check the matrix to see if we need projection
@@ -1742,6 +1762,7 @@ void GPUCommonHW::Execute_BoneMtxNum(u32 op, u32 diff) {
 			while ((src[i] >> 24) == GE_CMD_BONEMATRIXDATA) {
 				const u32 newVal = src[i] << 8;
 				if (dst[i] != newVal) {
+					stvdiag::g_causa = stvdiag::CAUSA_MTX_BONE;
 					Flush();
 					dst[i] = newVal;
 				}
@@ -1784,6 +1805,7 @@ void GPUCommonHW::Execute_BoneMtxData(u32 op, u32 diff) {
 	if (num < 96 && newVal != ((const u32 *)gstate.boneMatrix)[num]) {
 		// Bone matrices should NOT flush when software skinning is enabled!
 		if (!g_Config.bSoftwareSkinning) {
+			stvdiag::g_causa = stvdiag::CAUSA_MTX_BONE_LENTO;
 			Flush();
 			gstate_c.Dirty(DIRTY_BONEMATRIX0 << (num / 12));
 		} else {

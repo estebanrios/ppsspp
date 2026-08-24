@@ -34,6 +34,7 @@
 #include "Core/Debugger/MemBlockInfo.h"
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
+#include "GPU/Common/StvDiagVaciados.h"
 #include "GPU/Common/PresentationCommon.h"
 #include "GPU/Common/TextureCacheCommon.h"
 #include "GPU/Common/ReinterpretFramebuffer.h"
@@ -3327,6 +3328,7 @@ void FramebufferManagerCommon::FlushBeforeCopy() {
 		// do something more focused here.
 		bool changed;
 		SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason, &changed);
+		stvdiag::g_causa = stvdiag::CAUSA_FRAMEBUF_MGR;
 		drawEngine_->Flush();
 	}
 }

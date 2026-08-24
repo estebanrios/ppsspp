@@ -37,6 +37,8 @@
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/ShaderUniforms.h"
 #include "GPU/Vulkan/DrawEngineVulkan.h"
+#include "Core/Config.h"
+#include "GPU/Common/StvDiagVaciados.h"
 #include "GPU/Vulkan/TextureCacheVulkan.h"
 #include "GPU/Vulkan/ShaderManagerVulkan.h"
 #include "GPU/Vulkan/PipelineManagerVulkan.h"
@@ -154,6 +156,8 @@ void DrawEngineVulkan::DeviceRestore(Draw::DrawContext *draw) {
 }
 
 void DrawEngineVulkan::BeginFrame() {
+	// STV: unico punto de volcado, una vez por cuadro y fuera del bucle de draws.
+	stvdiag::PorCuadro(g_Config.memStickDirectory.c_str());
 	DrawEngineCommon::BeginFrame();
 
 	lastPipeline_ = nullptr;
@@ -209,6 +213,7 @@ void DrawEngineVulkan::Invalidate(InvalidationCallbackFlags flags) {
 
 // The inline wrapper in the header checks for numDrawCalls_ == 0
 void DrawEngineVulkan::Flush() {
+	stvdiag::AlLlamar(numDrawVerts_, gstate_c.dirty);  // STV: cuenta la LLAMADA y captura que cambio (el CORTE lo cuenta ResetAfterDrawInline)
 	if (!numDrawVerts_) {
 		return;
 	}
@@ -587,6 +592,7 @@ void DrawEngineVulkan::Flush() {
 }
 
 void DrawEngineVulkan::ResetAfterDraw() {
+	stvdiag::AlAbortar();  // STV: Flush() que abandono sin dibujar
 	indexGen.Reset();
 	numDecodedVerts_ = 0;
 	numDrawVerts_ = 0;
