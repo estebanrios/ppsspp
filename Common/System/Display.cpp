@@ -33,7 +33,17 @@ void RotateRectToDisplayImpl(DisplayRect<T> &rect, T curRTWidth, T curRTHeight) 
 		T origX = rect.x;
 		T origY = rect.y;
 		T rth = curRTWidth;
-		rect.x = clamp_value(rth - rect.h - origY, T{}, curRTHeight);
+		// STV_ROTFIX_v1: el limite del clamp estaba CRUZADO (curRTHeight).
+		// La x rotada vive en el eje del ANCHO fisico del buffer: clampar al
+		// alto corria el scissor de cualquier rect cuya x rotada superara el
+		// alto. Con prerotate 270 en el panel nativo-portrait de la consola
+		// (backbuffer fisico 720x1280, UI logica 1280x720) el strip de
+		// pestanas de los ajustes rotaba a y'=1015, el clamp lo aplastaba a
+		// 720 y el strip entero quedaba fuera de su scissor: INVISIBLE (pero
+		// clickeable). Simetrico en ambos casos; bug de upstream latente
+		// detras de su veto al prerotate movil (issue #15773) — candidato a
+		// PR upstream.
+		rect.x = clamp_value(rth - rect.h - origY, T{}, curRTWidth);
 		rect.y = origX;
 		T temp = rect.w;
 		rect.w = rect.h;
@@ -45,7 +55,8 @@ void RotateRectToDisplayImpl(DisplayRect<T> &rect, T curRTWidth, T curRTHeight) 
 		T origY = rect.y;
 		T rtw = curRTHeight;
 		rect.x = origY;
-		rect.y = clamp_value(rtw - rect.w - origX, T{}, curRTWidth);
+		// STV_ROTFIX_v1: idem — la y rotada vive en el eje del ALTO fisico.
+		rect.y = clamp_value(rtw - rect.w - origX, T{}, curRTHeight);
 		T temp = rect.w;
 		rect.w = rect.h;
 		rect.h = temp;
