@@ -44,6 +44,7 @@
 #include "GPU/Debugger/Stepping.h"
 #include "GPU/GPU.h"
 #include "GPU/GPUCommon.h"
+#include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 
 // Step command to execute next
 static std::mutex g_stepMutex;
@@ -224,7 +225,15 @@ void Core_RunLoopUntil(u64 globalticks) {
 				coreState = CORE_STEPPING_CPU;
 			}
 			break;  // Will loop around to go to RUNNING_GE or NEXTFRAME, which will exit.
-		case CORE_RUNNING_GE:
+		case CORE_RUNNING_GE: {
+			// STV_GE_THREAD_v1: el camino del split (debugger) ejecuta listas
+			// inline aca. Hoy es inalcanzable con el worker en vuelo porque
+			// StvGeExigeInline() es superset de ShouldSplitOverGe() y con
+			// debugger nadie postea ordenes — pero ese acople es implicito, y
+			// si algun dia divergen, este candado convierte una carrera
+			// silenciosa en una espera. Con nivel 0 cuesta un load y un branch
+			// a frecuencia ~cero (solo corre en CORE_RUNNING_GE).
+			stvge::CandadoGe candadoGe;
 			switch (gpu->ProcessDLQueue()) {
 			case DLResult::DebugBreak:
 				GPUStepping::EnterStepping(coreState);
@@ -242,6 +251,7 @@ void Core_RunLoopUntil(u64 globalticks) {
 				break;
 			}
 			break;
+		}
 		}
 	}
 }
