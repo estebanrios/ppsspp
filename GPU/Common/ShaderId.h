@@ -103,6 +103,12 @@ enum FShaderBit : uint8_t {
 	FS_BIT_USE_FRAMEBUFFER_FETCH = 59,
 	FS_BIT_UBERSHADER = 60,
 	FS_BIT_DEPTH_TEST_NEVER = 61,  // Only used on Mali. Set when depth == NEVER. We forcibly avoid writing to depth in this case, since it crashes the driver.
+	// STV_A0D_v1: descarte de fragments de contribucion nula en blending
+	// estandar (srcalpha/invsrcalpha, sin escritura de z ni stencil): con
+	// alpha < 1/255 el blend es identidad y descartar es matematicamente
+	// identico. Bit propio para que los draws opacos conserven su shader SIN
+	// discard (early-Z/FPK del tiler intactos).
+	FS_BIT_STV_DISCARD_A0 = 62,
 };
 
 static inline FShaderBit operator +(FShaderBit bit, int i) {

@@ -834,6 +834,17 @@ bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLangu
 			WRITE(p, "  v = mix(vec4(u_fogcolor, v.a), v, fogCoef);\n");
 		}
 
+		// STV_A0D_v1: el bit garantiza (ver ShaderId.cpp) que este draw
+		// blendea srcalpha/invsrcalpha sin tocar z ni stencil: con alpha
+		// bajo 1/255 el blend es identidad y descartar produce EXACTAMENTE
+		// los mismos pixeles, ahorrando la op de tile. El umbral 0.002 es
+		// el mismo medio-LSB de 8 bits que usan los tests de upstream.
+		// (El fog no altera v.a, asi que evaluarlo aqui cubre el color final.)
+		if (id.Bit(FS_BIT_STV_DISCARD_A0)) {
+			WRITE(p, "  if (v.a < 0.002) DISCARD;\n");
+			*fragmentShaderFlags |= FragmentShaderFlags::USES_DISCARD;
+		}
+
 		// Texture access is at half texels [0.5/256, 255.5/256], but colors are normalized [0, 255].
 		// So we have to scale to account for the difference.
 		char alphaTestXCoord[64] = "0";
