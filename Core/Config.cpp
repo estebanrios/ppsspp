@@ -726,6 +726,8 @@ static const ConfigSetting graphicsSettings[] = {
 	ConfigSetting("TextureFiltering", SETTING(g_Config, iTexFiltering), 1, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("Smart2DTexFiltering", SETTING(g_Config, bSmart2DTexFiltering), false, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("InternalResolution", SETTING(g_Config, iInternalResolution), &DefaultInternalResolution, CfgFlag::PER_GAME | CfgFlag::REPORT),
+	// STV_ESCALA_v1: ver Config.h.
+	ConfigSetting("STVEscala", SETTING(g_Config, iStvEscala), 0, CfgFlag::PER_GAME),
 	ConfigSetting("AndroidHwScale", SETTING(g_Config, iAndroidHwScale), &DefaultAndroidHwScale, CfgFlag::DEFAULT),
 	ConfigSetting("HighQualityDepth", SETTING(g_Config, bHighQualityDepth), true, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("FrameSkip", SETTING(g_Config, iFrameSkip), 0, CfgFlag::PER_GAME | CfgFlag::REPORT),

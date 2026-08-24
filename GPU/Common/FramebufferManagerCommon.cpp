@@ -92,7 +92,15 @@ float StvResolverEscala() {
 		return StvEscalaDeTexto(prop);
 	}
 #endif
-	return 0.0f;
+	// STV_ESCALA_v1 (por juego): sin env ni prop, manda el ini — y como
+	// STVEscala es PER_GAME, la config por juego de PPSSPP resuelve la
+	// escala por titulo sin lanzador especial (GoW=150, resto=0).
+	switch (g_Config.iStvEscala) {
+	case 125: return 1.25f;
+	case 150: return 1.5f;
+	case 175: return 1.75f;
+	default: return 0.0f;
+	}
 }
 
 void StvEmitir(const char *linea) {
@@ -163,15 +171,16 @@ bool FramebufferManagerCommon::UpdateRenderSize(int msaaLevel) {
 	renderHeight_ = (float)PSP_CoreParameter().renderHeight;
 	renderScaleFactor_ = (float)PSP_CoreParameter().renderScaleFactor;
 
-	// STV_ESCALA_v1: escala fraccional de render. La prop se lee UNA sola vez
-	// por proceso (static const): conmutarla exige reiniciar el juego, igual
-	// que las demas palancas STV — asi ningun vfb vivo arrastra un factor
-	// distinto del que reciben los que nacen despues.
+	// STV_ESCALA_v1: escala fraccional de render. Se relee en cada
+	// UpdateRenderSize — el mismo punto del flujo con el que PPSSPP aplica
+	// los cambios de resolucion nativos (boot del juego / Resized), asi la
+	// clave PER_GAME del ini rige por titulo y no se arrastra entre juegos
+	// del mismo proceso. La prop/env la pisan (el A/B del banco manda).
 	//
 	// NOTA: PSP_CoreParameter().renderScaleFactor (la config entera del
 	// usuario) NO se toca — el pisado vive solo en renderScaleFactor_ y en los
 	// vfb que se creen a partir de aca.
-	static const float stvEscala = StvResolverEscala();
+	const float stvEscala = StvResolverEscala();
 	if (stvEscala != 0.0f) {
 		const int configEntera = PSP_CoreParameter().renderScaleFactor;
 		if (configEntera == 2) {

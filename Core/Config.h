@@ -327,6 +327,11 @@ public:
 	bool bFullScreen;
 	bool bFullScreenMulti;
 	int iInternalResolution;  // 0 = Auto (native), 1 = 1x (480x272), 2 = 2x, 3 = 3x, 4 = 4x and so on.
+	// STV_ESCALA_v1: escala fraccional por juego (0=off, 125/150/175). Es
+	// PER_GAME: la config por juego de PPSSPP la resuelve sola (GoW en 150,
+	// el resto en 0) sin lanzador especial. La prop debug.stv.escala la PISA
+	// cuando esta seteada (el A/B del banco manda sobre el ini).
+	int iStvEscala;
 	int iAnisotropyLevel;  // 0 - 5, powers of 2: 0 = 1x = no aniso
 	int iMultiSampleLevel;
 	int bHighQualityDepth;
