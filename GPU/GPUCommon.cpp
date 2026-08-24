@@ -1899,7 +1899,11 @@ void GPUCommon::DoBlockTransfer(u32 skipDrawReason) {
 
 		if (framebufferManager_) {
 			// Fixes Gran Turismo's funky text issue, since it overwrites the current texture.
-			textureCache_->Invalidate(dstBasePtr + (dstY * dstStride + dstX) * bpp, height * dstStride * bpp, GPU_INVALIDATE_HINT);
+			// STV(epi): MISMA cabeza, MISMO instante; el recorrido del mapa se
+			// acumula y se hace una vez por tanda. NotifyBlockTransferAfter, en
+			// cambio, se sigue llamando SIEMPRE: puede tener efectos reales
+			// (DrawPixels) y fusionarlo NO seria inofensivo.
+			textureCache_->InvalidateDiferido(dstBasePtr + (dstY * dstStride + dstX) * bpp, height * dstStride * bpp);
 			framebufferManager_->NotifyBlockTransferAfter(dstBasePtr, dstStride, dstX, dstY, srcBasePtr, srcStride, srcX, srcY, width, height, bpp, skipDrawReason);
 		}
 	}

@@ -37,6 +37,7 @@
 #include "Core/HW/Display.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
 #include "GPU/Common/TextureCacheCommon.h"
+#include "GPU/Common/StvEpilogo.h"
 #include "GPU/Common/TextureDecoder.h"
 #include "GPU/Common/GPUStateUtils.h"
 #include "GPU/ge_constants.h"
@@ -119,6 +120,12 @@ TextureCacheCommon::~TextureCacheCommon() {
 }
 
 void TextureCacheCommon::StartFrame() {
+	// STV(epi): cota dura de cuanto puede vivir un rango sin aplicarse. En el
+	// caso normal ya lo vacio SetTexture() hace rato; esto cubre el cuadro en
+	// que el juego deja de texturizar del todo.
+	if (stvInvPend_) StvVaciarInvalidacion(stvepi::MOT_FIN);
+	// Y aca se re-lee el interruptor en caliente (cada 32 cuadros, no cada uno).
+	stvepi::PorCuadro();
 	ForgetLastTexture();
 	textureShaderCache_->Decimate();
 	timesInvalidatedAllThisFrame_ = 0;
@@ -411,6 +418,13 @@ void TextureCacheCommon::UpdateMaxSeenV(TexCacheEntry *entry, bool throughMode) 
 }
 
 TexCacheEntry *TextureCacheCommon::SetTexture() {
+	// STV(epi): LA BARRERA. Esta funcion es el UNICO lector, en todo el arbol,
+	// de los campos que el recorrido diferido escribe (estado de hash,
+	// numFrames, framesUntilNextFullHash) — directamente en las lineas de mas
+	// abajo, e indirectamente por CheckFullHash() y HandleTextureChange(), que
+	// solo se llaman desde aca. Vaciar el rango pendiente en la primera linea
+	// garantiza que ninguna textura se muestree con datos viejos.
+	if (stvInvPend_) StvVaciarInvalidacion(stvepi::MOT_USO);
 	u8 level = 0;
 	if (IsFakeMipmapChange()) {
 		level = std::max(0, gstate.getTexLevelOffset16() / 16);
@@ -2557,6 +2571,14 @@ void TextureCacheCommon::ApplyTextureDepal(TexCacheEntry *entry) {
 }
 
 void TextureCacheCommon::Clear(bool delete_them) {
+	// STV(epi): se DESCARTA, no se recorre: las entradas que habria que demotar
+	// estan por desaparecer tres lineas mas abajo.
+	if (stvInvPend_) {
+		stvInvPend_ = false;
+		stvInvMin_ = 0;
+		stvInvMax_ = 0;
+		stvepi::g_vaciados[stvepi::MOT_FIN]++;
+	}
 	textureShaderCache_->Clear();
 
 	for (TexCache::iterator iter = cache_.begin(); iter != cache_.end(); ++iter) {
@@ -2676,7 +2698,93 @@ bool TextureCacheCommon::CheckFullHash(TexCacheEntry *entry, bool &doDelete) {
 	return false;
 }
 
+// STV(epi): vacia el rango sucio acumulado por InvalidateDiferido().
+// Llama a Invalidate() de UPSTREAM: no se copia ni una linea de su logica, asi
+// que si upstream cambia el recorrido, esto cambia con el.
+// El flag se apaga ANTES de la llamada, de modo que la barrera que Invalidate()
+// tiene arriba vea "nada pendiente" y no haya recursion.
+void TextureCacheCommon::StvVaciarInvalidacion(unsigned motivo) {
+	const u32 a = stvInvMin_;
+	const u32 b = stvInvMax_;
+	stvInvPend_ = false;
+	stvInvMin_ = 0;
+	stvInvMax_ = 0;
+	if (motivo < stvepi::NUM_MOT) stvepi::g_vaciados[motivo]++;
+	if (b > a) {
+		Invalidate(a, (int)(b - a), GPU_INVALIDATE_HINT);
+	}
+}
+
+// STV(epi): el epilogo de GPUCommon::DoBlockTransfer llama ACA en vez de a
+// Invalidate(..., GPU_INVALIDATE_HINT). Ver el parche para el argumento
+// completo; en corto:
+//   * la CABEZA (el DIRTY_TEXTURE_IMAGE de la textura ATADA AHORA) es
+//     IDENTICA a la de upstream y NO se difiere: es lo que garantiza que
+//     SetTexture() se llame en el mismo dibujo que hoy.
+//   * el RECORRIDO del mapa se acumula y se hace una vez por tanda, siempre
+//     antes de que SetTexture() pueda leer un estado de hash.
+void TextureCacheCommon::InvalidateDiferido(u32 addr, int size) {
+	// --- CABEZA: copia exacta de TextureCacheCommon::Invalidate para el caso
+	//     type != GPU_INVALIDATE_ALL. Inmediata, sin diferir. ---
+	const int LARGEST_TEXTURE_SIZE = 512 * 512 * 4;
+	const u32 a = addr & 0x3FFFFFFF;
+	const u32 aEnd = a + (u32)size;
+	const u32 currentAddr = gstate.getTextureAddress(0);
+	if (aEnd >= currentAddr && a < currentAddr + LARGEST_TEXTURE_SIZE) {
+		gstate_c.Dirty(DIRTY_TEXTURE_IMAGE);
+	}
+
+	// Una linea por sesion. Va ANTES de la puerta a proposito: si el backoff
+	// esta apagado hay que poder verlo, no adivinarlo por el silencio.
+	stvepi::Hola(g_Config.bTextureBackoffCache ? 1 : 0);
+
+	// --- PUERTA: si el backoff esta apagado, upstream no recorre NUNCA. No hay
+	//     nada que diferir y el comportamiento queda identico bit a bit. ---
+	if (!g_Config.bTextureBackoffCache) {
+		return;
+	}
+
+	// --- FRENOS: cualquiera de estos cae al camino EXACTO de upstream. ---
+	//   * interruptor en caliente apagado (debug.stv.epi=0)
+	//   * tamano raro o desborde de la suma
+	// Invalidate() vacia solo lo que hubiera quedado pendiente, asi que apagar
+	// el interruptor a mitad de una tanda no deja un rango colgado.
+	if (!stvepi::g_fusion || size <= 0 || aEnd < a) {
+		stvepi::g_pasadas++;
+		Invalidate(addr, size, GPU_INVALIDATE_HINT);
+		return;
+	}
+
+	stvepi::g_diferidas++;
+	if (!stvInvPend_) {
+		stvInvPend_ = true;
+		stvInvMin_ = a;
+		stvInvMax_ = aEnd;
+		return;
+	}
+
+	const u32 nMin = a < stvInvMin_ ? a : stvInvMin_;
+	const u32 nMax = aEnd > stvInvMax_ ? aEnd : stvInvMax_;
+	if (nMax - nMin > stvepi::kTopeRango) {
+		// El rango fusionado se iria demasiado lejos: se vacia el viejo y se
+		// arranca uno nuevo. El recorrido NUNCA se ensancha sin limite.
+		StvVaciarInvalidacion(stvepi::MOT_UMBRAL);
+		stvInvPend_ = true;
+		stvInvMin_ = a;
+		stvInvMax_ = aEnd;
+		return;
+	}
+	stvInvMin_ = nMin;
+	stvInvMax_ = nMax;
+	stvepi::g_fusionadas++;
+}
+
 void TextureCacheCommon::Invalidate(u32 addr, int size, GPUInvalidationType type) {
+	// STV(epi): conserva el ORDEN de upstream. Si hay un rango diferido, se
+	// aplica ANTES que esta invalidacion, que es como habrian salido las dos si
+	// no hubiera fusion. StvVaciarInvalidacion apaga el flag antes de reentrar
+	// aca, asi que no hay recursion.
+	if (stvInvPend_) StvVaciarInvalidacion(stvepi::MOT_USO);
 	// They could invalidate inside the texture, let's just give a bit of leeway.
 	// TODO: Keep track of the largest texture size in bytes, and use that instead of this
 	// humongous unrealistic value.
@@ -2745,6 +2853,8 @@ void TextureCacheCommon::Invalidate(u32 addr, int size, GPUInvalidationType type
 }
 
 void TextureCacheCommon::InvalidateAll(GPUInvalidationType /*unused*/) {
+	// STV(epi): igual que en Invalidate, para conservar el orden de upstream.
+	if (stvInvPend_) StvVaciarInvalidacion(stvepi::MOT_USO);
 	// If we're hashing every use, without backoff, then this isn't needed.
 	if (!g_Config.bTextureBackoffCache) {
 		return;
