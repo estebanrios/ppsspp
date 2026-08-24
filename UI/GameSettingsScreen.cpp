@@ -349,6 +349,36 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
 		return !g_Config.bSoftwareRendering && !g_Config.bSkipBufferEffects;
 	});
 
+	// STV_ESCALA_v1: el selector visible de la escala fraccional (pedido del
+	// usuario). g_Config.iStvEscala guarda 0/125/150/175 (el formato del ini
+	// per-game YA horneado en las imagenes — no se cambia la semantica);
+	// PopupMultiChoice exige valores contiguos, asi que la UI edita un indice
+	// estatico 0-3 sincronizado a mano en ambos sentidos. Es PER_GAME: con
+	// "Crear config. del juego" el ajuste queda por titulo (GoW viene de
+	// fabrica en x1.5). Sin i18n a proposito: fork propio, consola en espanol.
+	{
+		static const char *stvEscalas[] = { "Apagada (usa la de arriba)", "x1.25 (600x340)", "x1.5 (720x408)", "x1.75 (840x476)" };
+		static int stvEscalaIndice = 0;
+		switch (g_Config.iStvEscala) {
+		case 125: stvEscalaIndice = 1; break;
+		case 150: stvEscalaIndice = 2; break;
+		case 175: stvEscalaIndice = 3; break;
+		default: stvEscalaIndice = 0; break;
+		}
+		PopupMultiChoice *stvEscalaChoice = graphicsSettings->Add(new PopupMultiChoice(&stvEscalaIndice, "Escala fraccional (STV)", stvEscalas, 0, ARRAY_SIZE(stvEscalas), I18NCat::NONE, screenManager()));
+		stvEscalaChoice->OnChoice.Add([](UI::EventParams &e) {
+			static const int valores[] = { 0, 125, 150, 175 };
+			g_Config.iStvEscala = valores[stvEscalaIndice & 3];
+			Reporting::UpdateConfig();
+			System_PostUIMessage(UIMessage::GPU_RENDER_RESIZED);
+		});
+		stvEscalaChoice->SetEnabledFunc([] {
+			// Solo modifica el x2 (el diseno del parche); con otra resolucion
+			// base queda gris, igual que la ignora el runtime.
+			return !g_Config.bSoftwareRendering && !g_Config.bSkipBufferEffects && g_Config.iInternalResolution == 2;
+		});
+	}
+
 	int deviceType = System_GetPropertyInt(SYSPROP_DEVICE_TYPE);
 
 	if (deviceType != DEVICE_TYPE_VR) {
