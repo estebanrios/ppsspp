@@ -1230,6 +1230,17 @@ bool HandleGlobalMessage(UIMessage message, const std::string &value) {
 		// NOTE: If graphics backend isn't what's in the config (due to error fallback, or not matching the default
 		// and then getting permission), it will get out of sync. So we save and restore g_Config.iGPUBackend.
 		// Ideally we should simply reinitialize graphics to the mode from the config, but there are potential issues.
+		// STV: en esta consola el permiso viene PRE-OTORGADO, asi que este mensaje
+		// llega en CADA arranque y en los boots por intent se procesa DESPUES de
+		// que LoadGameConfig aplico la config por juego (medido: LoadGameConfig a
+		// los 14.493 s y este Reload a los 14.553 s — el juego corria con las
+		// globales, regresion per-game). Si ya rige una config por juego o hay un
+		// boot en curso, la carga inicial fue buena y no hay nada que recuperar.
+		const BootState stvBootState = PSP_GetBootState();
+		if (g_Config.IsGameSpecific() || stvBootState == BootState::Booting || stvBootState == BootState::Complete) {
+			INFO_LOG(Log::IO, "Skipping config reload after storage permission grant: boot in progress or game config active.");
+			return true;
+		}
 		int gpuBackend = g_Config.iGPUBackend;
 		INFO_LOG(Log::IO, "Reloading config after storage permission grant.");
 		g_Config.Reload();
