@@ -60,10 +60,11 @@ enum {
 // --- STV_ESCALA_v1: escalas fraccionales de render ---------------------------
 //
 // El factor de escala del render (antes int/u8) pasa a float para admitir
-// x1.25/x1.5/x1.75: God of War esta limitado por fill de GPU a x2 y estas
-// escalas intermedias recortan el fill sin caer a x1. Los valores validos
-// (1.0, 1.25, 1.5, 1.75, 2.0, 3.0...) son todos exactos en binario, asi que
-// las comparaciones == 1.0f y el redondeo de productos son deterministas.
+// x1.25/x1.5/x1.75 (sobre x2) y x2.25/x2.5/x2.75 (sobre x3): God of War esta
+// limitado por fill de GPU y estas escalas intermedias recortan el fill sin
+// caer al entero de abajo. Los valores validos (1.0, 1.25, 1.5, 1.75, 2.0,
+// 2.25, 2.5, 2.75, 3.0...) son todos exactos en binario, asi que las
+// comparaciones == 1.0f y el redondeo de productos son deterministas.
 //
 // StvEscalarDim es EL UNICO redondeo permitido para producto pixel*factor que
 // termina en un entero (tamanos de framebuffer, rects de blits/copias). Regla:

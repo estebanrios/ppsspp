@@ -42,11 +42,15 @@
 #include "GPU/GPUState.h"
 
 // =============================================================================
-// STV_ESCALA_v1 — escalas fraccionales de render (x1.25 / x1.5 / x1.75).
+// STV_ESCALA_v1 — escalas fraccionales de render (x1.25/x1.5/x1.75 sobre x2,
+// x2.25/x2.5/x2.75 sobre x3).
 //
 // God of War esta limitado por fill de GPU a x2 (960x544). Las escalas
-// intermedias recortan el fill para alcanzar 60 fps sin caer a x1. La palanca
-// SOLO pisa la config x2 del usuario; con x1/x3 se ignora (y se avisa).
+// intermedias recortan el fill para alcanzar 60 fps sin caer al entero de
+// abajo. Cada escala tiene su ANCLA entera (el entero inmediato superior:
+// 1.xx -> x2, 2.xx -> x3) y SOLO pisa esa config del usuario; con cualquier
+// otro entero se ignora (y se avisa). El selector de la UI setea el par
+// (ancla, escala) junto, asi que elegir "2.5x PSP (STV)" funciona solo.
 // Ver el helper StvEscalarDim y los tipos float en FramebufferManagerCommon.h.
 // =============================================================================
 
@@ -63,11 +67,12 @@ namespace {
 //   strings libppsspp_jni.so | grep STV_ESCALA_v1
 constexpr const char *kStvEscalaMarca = "STV_ESCALA_v1";
 
-// "125"/"150"/"175" -> factor; cualquier otro valor o ausencia = 0.0f (OFF,
-// comportamiento upstream exacto). A diferencia de las palancas por niveles
-// (debug.stv.ge, debug.stv.epi) aca NO hay clampeo ni default distinto de
-// OFF: la palanca es un enum cerrado y un typo la deja APAGADA — falla a
-// upstream, nunca a una escala rara.
+// "125"/"150"/"175"/"225"/"250"/"275" -> factor; cualquier otro valor o
+// ausencia = 0.0f (OFF, comportamiento upstream exacto). A diferencia de las
+// palancas por niveles (debug.stv.ge, debug.stv.epi) aca NO hay clampeo ni
+// default distinto de OFF: la palanca es un enum cerrado y un typo la deja
+// APAGADA — falla a upstream, nunca a una escala rara. Los seis valores son
+// fracciones diadicas (N/4): exactos en float binario.
 float StvEscalaDeTexto(const char *s) {
 	if (!s || !*s)
 		return 0.0f;
@@ -77,6 +82,12 @@ float StvEscalaDeTexto(const char *s) {
 		return 1.5f;
 	if (!strcmp(s, "175"))
 		return 1.75f;
+	if (!strcmp(s, "225"))
+		return 2.25f;
+	if (!strcmp(s, "250"))
+		return 2.5f;
+	if (!strcmp(s, "275"))
+		return 2.75f;
 	return 0.0f;
 }
 
@@ -99,6 +110,9 @@ float StvResolverEscala() {
 	case 125: return 1.25f;
 	case 150: return 1.5f;
 	case 175: return 1.75f;
+	case 225: return 2.25f;
+	case 250: return 2.5f;
+	case 275: return 2.75f;
 	default: return 0.0f;
 	}
 }
@@ -183,10 +197,17 @@ bool FramebufferManagerCommon::UpdateRenderSize(int msaaLevel) {
 	const float stvEscala = StvResolverEscala();
 	if (stvEscala != 0.0f) {
 		const int configEntera = PSP_CoreParameter().renderScaleFactor;
-		if (configEntera == 2) {
-			// Solo pisa el x2: el objetivo es recortar fill de GPU respecto
-			// de 960x544 sin caer a x1. 1.25/1.5/1.75 son exactos en float
-			// binario, asi que == 1.0f y los redondeos quedan deterministas.
+		// Ancla entera de cada escala: el entero inmediato superior. El enum
+		// es cerrado — los seis valores viven en (1,2) o (2,3) — asi que la
+		// comparacion es exacta: 1.25/1.5/1.75 anclan en x2 y 2.25/2.5/2.75
+		// anclan en x3. Sin ceilf: menos superficie, mismo resultado.
+		const int stvAncla = stvEscala < 2.0f ? 2 : 3;
+		if (configEntera == stvAncla) {
+			// Solo pisa su ancla: el objetivo es recortar fill de GPU
+			// respecto del entero de arriba (960x544 en x2, 1440x816 en x3)
+			// sin caer al entero de abajo. Los seis valores son N/4, exactos
+			// en float binario, asi que == 1.0f y los redondeos quedan
+			// deterministas.
 			renderScaleFactor_ = stvEscala;
 		}
 		// Log de arranque estilo de la casa; con guard para no spamear si
@@ -195,12 +216,12 @@ bool FramebufferManagerCommon::UpdateRenderSize(int msaaLevel) {
 		if (stvAvisada != renderScaleFactor_) {
 			stvAvisada = renderScaleFactor_;
 			char b[128];
-			if (configEntera == 2) {
+			if (configEntera == stvAncla) {
 				snprintf(b, sizeof(b), "STV: escala ACTIVA %g (%dx%d) (%s)",
 					stvEscala, StvEscalarDim(480.0f, stvEscala), StvEscalarDim(272.0f, stvEscala), kStvEscalaMarca);
 			} else {
-				snprintf(b, sizeof(b), "STV: escala IGNORADA (renderScaleFactor=%d, no 2) (%s)",
-					configEntera, kStvEscalaMarca);
+				snprintf(b, sizeof(b), "STV: escala IGNORADA (renderScaleFactor=%d, ancla de %g es %d) (%s)",
+					configEntera, stvEscala, stvAncla, kStvEscalaMarca);
 			}
 			StvEmitir(b);
 		}
