@@ -1816,7 +1816,23 @@ ScreenRenderFlags EmuScreen::RunEmulation(bool skipBufferEffects) {
 		}
 
 		if (gpu) {
-			// STV_GE_THREAD_v1: idem BeginHostFrame para la cadena EndHostFrame.
+			// STV_GE_THREAD_v1 (fix del crash de arranque): BARRERA, no solo
+			// candado. De aca hasta el proximo PSP_RunLoopWhileState el
+			// EmuThread emite draws de UI y ejecuta Finish()/Present()/
+			// BeginFrame() del render manager, que recorren y mueven steps_ y
+			// anulan curRenderStep_ SIN candado (el VRM es single-producer por
+			// diseño). El CandadoGe solo esperaba una pasada EN CURSO: una
+			// orden pendiente arrancaba DESPUES de soltar g_mu y el worker
+			// quedaba emitiendo draws en paralelo con Finish() — la carrera de
+			// los tombstones de los primeros 4-13 s (pipelines frios = pasadas
+			// largas que cruzan la frontera de cuadro; firma Flush/0x10 =
+			// curRenderStep_ nullptr, firma PerformRenderPass = steps_ movidos
+			// bajo un append). La Barrera espera worker idle + ordenes
+			// pendientes y drena; como todos los posteos de RUN nacen en este
+			// mismo hilo dentro del run loop, despues de esta linea no puede
+			// aparecer trabajo nuevo hasta el proximo cuadro. Precedente de
+			// Barrera en este contexto: SaveState::Process (SaveState.cpp).
+			stvge::Barrera();
 			stvge::CandadoGe candadoGe;
 			// Run post processing and other passes.
 			gpu->PrepareCopyDisplayToOutput(displayLayoutConfig);

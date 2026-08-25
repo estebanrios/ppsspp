@@ -86,6 +86,56 @@ static void Emitir(const char *linea) {
 #endif
 }
 
+// --- Gate de gracia del arranque ---------------------------------------------
+//
+// MEDIDO en el aparato: 20+ tombstones, TODOS con process-uptime 4-13 s y
+// NINGUNO despues; con nivel 0 jamas crashea. La ventana coincide con la
+// compilacion inicial de pipelines: las pasadas del arranque son largas y
+// cruzan la frontera de cuadro (la carrera real y su fix viven en
+// EmuScreen.cpp, cadena EndHostFrame — Barrera antes de Finish/Present).
+// Este gate es la mitigacion que el daemon externo ya probo, ahora horneada:
+// el worker NO se activa hasta que el juego lleva kGraciaSegundosDefecto
+// corriendo.
+//
+// Override sin recompilar: prop debug.stv.ge.gracia (env STV_GE_GRACIA, que
+// manda sobre la prop, mismo contrato que ResolverNivel) en SEGUNDOS. "0"
+// explicito = sin gracia (para aislar el fix real en el banco); texto no
+// numerico o ausente = default. El log dice el objetivo en VBLANKS para que
+// nadie confunda las unidades.
+inline constexpr int kGraciaSegundosDefecto = 20;
+inline constexpr int kVblanksPorSegundo = 60;  // vblank PSP: 59,94 ~ 60/s
+
+// Vblanks que lleva el juego ACTUAL. Lo incrementa PorVblank (EmuThread) y lo
+// resetea Apagar — que GPU_Shutdown llama en CADA teardown de juego
+// (PSP_Shutdown -> GPU_Shutdown, Core/System.cpp:772), tambien al cambiar de
+// juego o reiniciar en el mismo proceso. Atomico relaxed: el teardown de un
+// boot fallido puede llegar desde el loader thread.
+static std::atomic<uint32_t> g_vblanksDeJuego{0};
+static std::atomic<bool> g_graciaAnunciada{false};
+
+// strtol + clamp 0..3600 s: atoi con texto enorme es UB con signo y un
+// overflow silencioso podria dejar el gate apagado sin aviso.
+static int GraciaSegundosDeTexto(const char *t) {
+	if (!t || *t < '0' || *t > '9')
+		return kGraciaSegundosDefecto;
+	long s = strtol(t, nullptr, 10);
+	if (s < 0) s = 0;
+	if (s > 3600) s = 3600;
+	return (int)s;
+}
+
+static int GraciaEnVblanks() {
+	const char *e = getenv("STV_GE_GRACIA");
+	if (e && *e)
+		return GraciaSegundosDeTexto(e) * kVblanksPorSegundo;
+#if defined(__ANDROID__)
+	char prop[PROP_VALUE_MAX] = { 0 };
+	if (__system_property_get("debug.stv.ge.gracia", prop) > 0 && prop[0])
+		return GraciaSegundosDeTexto(prop) * kVblanksPorSegundo;
+#endif
+	return kGraciaSegundosDefecto * kVblanksPorSegundo;
+}
+
 // --- Estado interno ----------------------------------------------------------
 
 // Descriptor de trigger pendiente. Lleva los argumentos EXACTOS con los que el
@@ -375,12 +425,36 @@ void PorVblank() {
 
 	// Releida cada vblank (a diferencia del contador de epi: aca la llamada ya
 	// es 1/cuadro, la prop cuesta ~nada y el A/B conmuta al toque).
+	const uint32_t vb = g_vblanksDeJuego.fetch_add(1, std::memory_order_relaxed) + 1;
 	int deseado = ResolverNivel();
 	// E1 solo cubre los backends HW (los candados viven en GPUCommon/HW y en
 	// EmuScreen); con el renderer por software el worker queda deshabilitado
 	// en vez de correr sin candados en la mitad de las entradas.
 	if (g_Config.bSoftwareRendering)
 		deseado = 0;
+	// Gate de gracia: mientras el juego no cumplio la ventana de arranque, el
+	// nivel deseado se fuerza a 0 (ver el bloque de kGraciaSegundosDefecto).
+	// Se anuncia UNA vez al frenar un nivel pedido > 0 y una vez al cumplirla,
+	// para que el testigo cuente la historia completa.
+	if (deseado > 0) {
+		const int gracia = GraciaEnVblanks();
+		if ((int64_t)vb < (int64_t)gracia) {
+			if (!g_graciaAnunciada) {
+				g_graciaAnunciada = true;
+				char b[160];
+				snprintf(b, sizeof(b),
+					"STV: ge en gracia (vblank %u de %d): nivel 0 forzado hasta cumplirla",
+					vb, gracia);
+				Emitir(b);
+			}
+			deseado = 0;
+		} else if (g_graciaAnunciada) {
+			g_graciaAnunciada = false;
+			char b[96];
+			snprintf(b, sizeof(b), "STV: ge gracia cumplida en el vblank %u", vb);
+			Emitir(b);
+		}
+	}
 	const int activo = NivelActivo();
 	if (deseado == activo)
 		return;
@@ -451,6 +525,12 @@ void Apagar() {
 
 	g_nivelActivo.store(0, std::memory_order_relaxed);
 	g_hola = false;
+	// Gate de gracia: GPU_Shutdown pasa por aca en CADA teardown de juego
+	// (PSP_Shutdown -> GPU_Shutdown, Core/System.cpp:772), tambien al cambiar
+	// de juego o reiniciar en el mismo proceso — el proximo boot arranca su
+	// ventana de gracia desde cero.
+	g_vblanksDeJuego.store(0, std::memory_order_relaxed);
+	g_graciaAnunciada = false;
 	g_pasadas.store(0, std::memory_order_relaxed);
 	g_triggers.store(0, std::memory_order_relaxed);
 	g_drenajes.store(0, std::memory_order_relaxed);
