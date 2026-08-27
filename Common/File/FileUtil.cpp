@@ -23,6 +23,15 @@
 #else
 #define _POSIX_SOURCE
 #define _LARGE_TIME_API
+#if defined(__APPLE__)
+// STV: en Darwin el _POSIX_SOURCE de arriba deja la libc en nivel POSIX.1-1988,
+// que NO declara fsync() ni las banderas O_DIRECTORY/O_CLOEXEC (son de
+// POSIX.2008) — o sea que File::SyncFileHandle/SyncDirBestEffort no compilan.
+// _DARWIN_C_SOURCE devuelve el nivel completo del sistema. Solo toca a
+// macOS/iOS: bionic y glibc las declaran igual con _POSIX_SOURCE a secas
+// (comprobado con el clang del NDK 29 y con g++ 13).
+#define _DARWIN_C_SOURCE
+#endif
 #endif
 
 #include "ppsspp_config.h"
@@ -62,6 +71,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <utime.h>
+#include <fcntl.h>  // STV: O_DIRECTORY/O_CLOEXEC del fsync de directorio
 #endif
 
 #if defined(__DragonFly__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__)
@@ -1040,6 +1050,56 @@ bool CreateEmptyFile(const Path &filename) {
 	}
 	fclose(pFile);
 	return true;
+}
+
+// STV: fflush + fsync sobre un archivo YA ABIERTO. Ver el comentario del .h:
+// fflush solo mueve el bufer de stdio al nucleo, el fsync es el que garantiza
+// que los bytes estan en la microSD. NUNCA cambia el resultado de la operacion
+// del que llama: una escritura buena sigue siendo buena aunque el sync falle.
+bool SyncFileHandle(FILE *f) {
+	if (!f) {
+		return false;
+	}
+	if (fflush(f) != 0) {
+		return false;
+	}
+#if defined(HAVE_LIBRETRO_VFS)
+	// El VFS de libretro no expone descriptor: nos quedamos con el vaciado.
+	return true;
+#elif defined(_WIN32)
+	return _commit(_fileno(f)) == 0;
+#else
+	int fd = fileno(f);
+	if (fd < 0) {
+		return false;
+	}
+	return fsync(fd) == 0;
+#endif
+}
+
+// STV: fsync de la ENTRADA DE DIRECTORIO. Best-effort DE VERDAD, no por
+// pereza: en esta consola el memstick vive en un FUSE de MediaProvider cuyo
+// libfuse_jni NO implementa pf_fsyncdir, asi que el fsync del directorio no
+// llega a ningun lado y NO ES VERIFICABLE. Se deja igual porque en cualquier
+// otro medio (o si algun dia el FUSE lo implementa) es lo correcto, y porque
+// no cuesta nada. La durabilidad real de un tmp+rename la dan el fsync del
+// ARCHIVO antes del rename y el auto_da_alloc de ext4, que ante un rename
+// sobre un destino existente fuerza los datos del origen antes de publicar.
+void SyncDirBestEffort(const Path &path) {
+	if (path.Type() != PathType::NATIVE) {
+		return;
+	}
+#ifndef _WIN32
+	int fd = open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd < 0) {
+		VERBOSE_LOG(Log::IO, "SyncDirBestEffort: no se pudo abrir '%s': %s", path.c_str(), GetLastErrorMsg().c_str());
+		return;
+	}
+	if (fsync(fd) != 0) {
+		VERBOSE_LOG(Log::IO, "SyncDirBestEffort: fsync de '%s' fallo: %s", path.c_str(), GetLastErrorMsg().c_str());
+	}
+	close(fd);
+#endif
 }
 
 // Deletes an empty directory, returns true on success

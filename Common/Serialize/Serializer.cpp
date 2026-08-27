@@ -519,6 +519,17 @@ CChunkFileReader::Error CChunkFileReader::SaveFile(const Path &filename, const s
 	}
 	free(write_buffer);
 
+	// STV: el estado va SIEMPRE a un ".tmp" que el que llama renombra encima de
+	// la ranura. Sin fsync, el rename puede publicarse antes que los datos y un
+	// corte deja la ranura apuntando a un archivo truncado — o sea, "guardaste"
+	// y perdiste la partida vieja tambien. Se paga aca (~0,5-0,9 s por los 12-14
+	// MB del .ppst) porque guardar estado es una accion EXPLICITA del usuario,
+	// no algo que pase solo en medio del juego.
+	// Si el sync falla NO se cambia el retorno: los datos ya se escribieron.
+	if (!File::SyncFileHandle(pFile.GetHandle())) {
+		WARN_LOG(Log::SaveState, "ChunkReader: fsync fallo en %s (los datos pueden tardar en llegar a la tarjeta)", filename.c_str());
+	}
+
 	INFO_LOG(Log::SaveState, "ChunkReader: Done writing %s", filename.c_str());
 	return ERROR_NONE;
 }

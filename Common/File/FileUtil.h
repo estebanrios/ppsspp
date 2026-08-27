@@ -123,6 +123,21 @@ bool MoveIfFast(const Path &srcFilename, const Path &destFilename);
 // creates an empty file filename, returns true on success 
 bool CreateEmptyFile(const Path &filename);
 
+// STV: baja a disco el CONTENIDO de un archivo abierto (fflush + fsync).
+// fflush solo vacia el bufer de stdio hacia el nucleo; lo que garantiza que
+// los bytes llegaron al medio es el fsync. Devuelve false si el sync fallo,
+// pero el que llama NUNCA debe convertir eso en un error de la operacion:
+// una escritura que ya salio bien sigue estando bien aunque el fsync falle.
+bool SyncFileHandle(FILE *f);
+
+// STV: intenta bajar a disco la ENTRADA DE DIRECTORIO (el rename), no el
+// contenido. Solo hace algo con rutas NATIVE. Es best-effort y no devuelve
+// nada a proposito: en esta consola el memstick va sobre el FUSE de
+// MediaProvider, cuyo libfuse_jni NO implementa pf_fsyncdir, asi que el
+// fsync del directorio NO ES VERIFICABLE. La durabilidad real la dan el
+// fsync del ARCHIVO (arriba) y el auto_da_alloc de ext4.
+void SyncDirBestEffort(const Path &path);
+
 // Opens ini file (cheats, texture replacements etc.)
 // TODO: Belongs in System or something.
 bool OpenFileInEditor(const Path &fileName);

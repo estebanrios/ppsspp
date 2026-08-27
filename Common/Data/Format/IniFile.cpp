@@ -515,27 +515,65 @@ bool IniFile::Load(std::istream &in) {
 	return true;
 }
 
+// STV: escritura ATOMICA del ini. El ini se reescribe ENTERO en cada Save, y
+// con fopen("w") directo sobre el destino la ventana entre el truncado y el
+// vaciado deja la config vacia o a medias si hay un corte — que en esta
+// consola es el modo normal de apagar. Se escribe a "<destino>.tmp" en el
+// MISMO directorio (para que el rename no cruce de sistema de archivos), se
+// baja a disco, y recien ahi se renombra encima: rename(2) es atomico, o sea
+// que el destino es siempre el ini viejo entero o el nuevo entero.
+// Si CUALQUIER paso del camino tmp falla, se cae a la escritura directa de
+// siempre: los que llaman tratan false como error duro, y perder la config
+// porque no se pudo crear un tmp seria peor que el riesgo que ya se corria.
 bool IniFile::Save(const Path &filename)
 {
+	// El cuerpo va aparte porque el camino tmp puede tener que reescribirlo
+	// directo al destino si el rename no sale.
+	auto escribirTodo = [this](FILE *file) {
+		// UTF-8 byte order mark. To make sure notepad doesn't go nuts.
+		// TODO: Do we still need this? It's annoying.
+		fprintf(file, "\xEF\xBB\xBF");
+
+		for (const auto &section : sections) {
+			if (!section->name().empty() && (!section->lines_.empty() || !section->comment.empty())) {
+				fprintf(file, "[%s]%s\n", section->name().c_str(), section->comment.c_str());
+			}
+			for (const auto &line : section->lines_) {
+				std::string buffer;
+				line.Reconstruct(&buffer);
+				fprintf(file, "%s\n", buffer.c_str());
+			}
+		}
+	};
+
+	// Solo rutas NATIVE: con un content URI el ".tmp" y el rename no son la
+	// misma operacion y no vale la pena arriesgar la config del usuario.
+	if (filename.Type() == PathType::NATIVE) {
+		const Path tmp = filename.WithExtraExtension(".tmp");
+		FILE *file = File::OpenCFile(tmp, "w");
+		if (file) {
+			escribirTodo(file);
+			// El sync ANTES del rename: al reves, el rename puede publicarse
+			// antes que los datos y el destino queda apuntando a un ini vacio.
+			File::SyncFileHandle(file);
+			// fclose COMPROBADO: es donde aparecen los errores de escritura
+			// diferidos (ENOSPC, EIO). Si fallo, el tmp no sirve.
+			if (fclose(file) == 0 && File::Rename(tmp, filename)) {
+				File::SyncDirBestEffort(filename.NavigateUp());
+				return true;
+			}
+			// Camino tmp roto: se limpia el huerfano y se cae a la directa.
+			// (fclose ya libero el FILE aunque haya devuelto error.)
+			File::Delete(tmp, true);
+		}
+	}
+
 	FILE *file = File::OpenCFile(filename, "w");
 	if (!file) {
 		return false;
 	}
 
-	// UTF-8 byte order mark. To make sure notepad doesn't go nuts.
-	// TODO: Do we still need this? It's annoying.
-	fprintf(file, "\xEF\xBB\xBF");
-
-	for (const auto &section : sections) {
-		if (!section->name().empty() && (!section->lines_.empty() || !section->comment.empty())) {
-			fprintf(file, "[%s]%s\n", section->name().c_str(), section->comment.c_str());
-		}
-		for (const auto &line : section->lines_) {
-			std::string buffer;
-			line.Reconstruct(&buffer);
-			fprintf(file, "%s\n", buffer.c_str());
-		}
-	}
+	escribirTodo(file);
 
 	fclose(file);
 	return true;

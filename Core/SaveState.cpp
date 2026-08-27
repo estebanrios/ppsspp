@@ -499,10 +499,26 @@ int g_screenshotFailures;
 						g_Config.sStateUndoLastSaveGame = prefix;
 						g_Config.iStateUndoLastSaveSlot = slot;
 						g_Config.Save("Saving config for savestate last save undo");
-					} else {
+					} else if (fn.Type() != PathType::NATIVE) {
+						// STV: en rutas NO nativas (content URI) el "rename" es el
+						// de SAF, que NO pisa un destino existente: ahi el borrado
+						// previo sigue siendo necesario. En esta consola el memstick
+						// es NATIVE (/data/media/0/Android/data/.../files/PSP), asi
+						// que por aca no pasa nunca.
 						DeleteIfExists(fn);
 					}
+					// STV: sin undo y en NATIVE la ranura YA NO se borra antes de
+					// renombrar. File::Rename sobre NATIVE es rename(2), que
+					// sobreescribe de forma atomica: el borrado previo no aportaba
+					// nada y sacaba dos cosas. Dejaba la ranura VACIA en la ventana
+					// entre el borrado y el rename (un corte ahi se lleva la partida
+					// nueva Y la vieja), y le sacaba a ext4 la heuristica
+					// auto_da_alloc, que solo dispara cuando el rename PISA un
+					// archivo que existe.
 					File::Rename(fn.WithExtraExtension(".tmp"), fn);
+					// STV: best-effort, no verificable en el FUSE de esta consola;
+					// ver el comentario de File::SyncDirBestEffort.
+					File::SyncDirBestEffort(fn.NavigateUp());
 				}
 				if (callback) {
 					callback(status, message);
