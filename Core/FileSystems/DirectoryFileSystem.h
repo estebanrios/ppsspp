@@ -56,6 +56,9 @@ struct DirectoryFileHandle {
 	size_t Read(u8* pointer, s64 size);
 	size_t Write(const u8* pointer, s64 size);
 	size_t Seek(s32 position, FileMove type);
+	// STV parche 15: fsync del fd. Devuelve false si el sync fallo; el que
+	// llama decide (WritePSPFile cae a la escritura directa, jamas a error).
+	bool Sync();
 	void Close();
 };
 
@@ -81,6 +84,8 @@ public:
 	int      Ioctl(u32 handle, u32 cmd, u32 indataPtr, u32 inlen, u32 outdataPtr, u32 outlen, int &usec) override;
 	PSPDevType DevType(u32 handle) override;
 
+	bool SyncFile(u32 handle) override;                      // STV parche 15
+	bool SyncDirectory(const std::string &dirname) override; // STV parche 15
 	bool MkDir(const std::string &dirname) override;
 	bool RmDir(const std::string &dirname) override;
 	int  RenameFile(const std::string &from, const std::string &to) override;

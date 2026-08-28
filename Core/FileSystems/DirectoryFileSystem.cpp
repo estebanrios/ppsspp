@@ -477,6 +477,20 @@ size_t DirectoryFileHandle::Seek(s32 position, FileMove type)
 	return replay_ ? (size_t)ReplayApplyDisk64(ReplayAction::FILE_SEEK, result, CoreTiming::GetGlobalTimeUs()) : result;
 }
 
+// STV parche 15: fsync del contenido del handle. No toca la posicion ni el
+// estado; false = el sync fallo (el que llama NUNCA lo convierte en error de
+// la escritura, ver el contrato de File::SyncFileHandle).
+bool DirectoryFileHandle::Sync() {
+#ifdef HAVE_LIBRETRO_VFS
+	// El VFS de libretro no expone flush-a-disco: no-op verdadero.
+	return true;
+#elif defined(_WIN32)
+	return hFile != (HANDLE)-1 && FlushFileBuffers(hFile) != 0;
+#else
+	return hFile != -1 && fsync(hFile) == 0;
+#endif
+}
+
 void DirectoryFileHandle::Close() {
 	if (needsTrunc_ != -1) {
 #ifdef HAVE_LIBRETRO_VFS
@@ -677,6 +691,24 @@ void DirectoryFileSystem::CloseFile(u32 handle) {
 		//This shouldn't happen...
 		ERROR_LOG(Log::FileSystem,"Cannot close file that hasn't been opened: %08x", handle);
 	}
+}
+
+// STV parche 15: fsync de un handle abierto (lo usa WritePSPFile del
+// savedata). Handle desconocido = false, sin log de error: el que llama ya
+// cae a la escritura directa.
+bool DirectoryFileSystem::SyncFile(u32 handle) {
+	EntryMap::iterator iter = entries.find(handle);
+	if (iter == entries.end())
+		return false;
+	return iter->second.hFile.Sync();
+}
+
+// STV parche 15: fsync de la entrada de directorio tras un rename. Sobre el
+// ext4 directo de Android/data (esta consola) es durabilidad real; en otras
+// rutas queda best-effort (ver el comentario de File::SyncDirBestEffort).
+bool DirectoryFileSystem::SyncDirectory(const std::string &dirname) {
+	File::SyncDirBestEffort(GetLocalPath(dirname));
+	return true;
 }
 
 bool DirectoryFileSystem::OwnsHandle(u32 handle) {

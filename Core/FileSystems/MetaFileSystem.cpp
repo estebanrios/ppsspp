@@ -526,6 +526,30 @@ void MetaFileSystem::CloseFile(u32 handle)
 		sys->CloseFile(handle);
 }
 
+// STV parche 15: forward del fsync al filesystem dueño del handle (mismo
+// patron que CloseFile). Sin dueño = false, el que llama cae a la directa.
+bool MetaFileSystem::SyncFile(u32 handle)
+{
+	std::lock_guard<std::recursive_mutex> guard(lock);
+	IFileSystem *sys = GetHandleOwner(handle);
+	if (sys)
+		return sys->SyncFile(handle);
+	return false;
+}
+
+// STV parche 15: mapea el path guest (ms0:/...) y forwardea el fsync del
+// directorio al filesystem montado (mismo patron que RmDir/MkDir).
+bool MetaFileSystem::SyncDirectory(const std::string &dirname)
+{
+	std::lock_guard<std::recursive_mutex> guard(lock);
+	std::string of;
+	IFileSystem *system;
+	int error = MapFilePath(dirname, &of, &system);
+	if (error == 0)
+		return system->SyncDirectory(of);
+	return false;
+}
+
 size_t MetaFileSystem::ReadFile(u32 handle, u8 *pointer, s64 size)
 {
 	std::lock_guard<std::recursive_mutex> guard(lock);

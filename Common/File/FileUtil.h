@@ -132,10 +132,13 @@ bool SyncFileHandle(FILE *f);
 
 // STV: intenta bajar a disco la ENTRADA DE DIRECTORIO (el rename), no el
 // contenido. Solo hace algo con rutas NATIVE. Es best-effort y no devuelve
-// nada a proposito: en esta consola el memstick va sobre el FUSE de
-// MediaProvider, cuyo libfuse_jni NO implementa pf_fsyncdir, asi que el
-// fsync del directorio NO ES VERIFICABLE. La durabilidad real la dan el
-// fsync del ARCHIVO (arriba) y el auto_da_alloc de ext4.
+// nada a proposito, porque esta API no sabe sobre que monta la ruta:
+// la vista general de /sdcard va por el FUSE de MediaProvider (libfuse_jni
+// NO implementa pf_fsyncdir: ahi el fsync del directorio no es verificable),
+// PERO Android/data/<paquete> — donde vive el memstick de esta consola — es
+// ext4 DIRECTO (verificado F11b en mountinfo de un proceso de app): en esa
+// ruta el fsyncdir se honra y el rename+fsyncdir es durabilidad real.
+// La red de fondo en ambos casos: fsync del ARCHIVO + auto_da_alloc de ext4.
 void SyncDirBestEffort(const Path &path);
 
 // Opens ini file (cheats, texture replacements etc.)

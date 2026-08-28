@@ -112,6 +112,8 @@ public:
 	std::vector<PSPFileInfo> GetDirListing(std::string_view path, bool *exists = nullptr) override;
 	int      OpenFile(std::string filename, FileAccess access, const char *devicename = nullptr) override;
 	void     CloseFile(u32 handle) override;
+	bool     SyncFile(u32 handle) override;                      // STV parche 15
+	bool     SyncDirectory(const std::string &dirname) override; // STV parche 15
 	size_t   ReadFile(u32 handle, u8 *pointer, s64 size) override;
 	size_t   ReadFile(u32 handle, u8 *pointer, s64 size, int &usec) override;
 	size_t   WriteFile(u32 handle, const u8 *pointer, s64 size) override;

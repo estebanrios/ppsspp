@@ -86,7 +86,40 @@ namespace
 
 	bool WritePSPFile(const std::string &filename, const u8 *data, SceSize dataSize)
 	{
-		int handle = pspFileSystem.OpenFile(filename, (FileAccess)(FILEACCESS_WRITE | FILEACCESS_CREATE | FILEACCESS_TRUNCATE));
+		// STV parche 15 (F11b): commit por ARCHIVO — tmp + fsync + rename +
+		// fsync del directorio. La escritura directa historica truncaba el
+		// destino ANTES de escribir: un corte no solo perdia el guardado
+		// nuevo, destruia el anterior. OJO CON EL ALCANCE: esto commitea UN
+		// archivo, NO la partida (una partida multi-archivo son varias
+		// llamadas Save del juego); el staging a nivel directorio queda
+		// anotado en el tablero del CFW como deuda.
+		// El sufijo va en minusculas A PROPOSITO: GetFilesList saltea
+		// nombres con minusculas, asi que un huerfano de un corte es
+		// invisible para esa modalidad (el barrido de Save() hace el resto).
+		// Si CUALQUIER paso del patron falla se borra el tmp y se cae a la
+		// escritura directa: un fallo de sync/rename JAMAS se convierte en
+		// error de la operacion (contrato de File::SyncFileHandle).
+		const std::string tmpPath = filename + ".stvtmp";
+		int handle = pspFileSystem.OpenFile(tmpPath, (FileAccess)(FILEACCESS_WRITE | FILEACCESS_CREATE | FILEACCESS_TRUNCATE));
+		if (handle >= 0) {
+			size_t result = pspFileSystem.WriteFile(handle, data, dataSize);
+			bool synced = pspFileSystem.SyncFile(handle);
+			pspFileSystem.CloseFile(handle);
+			if (result == dataSize && synced &&
+			    pspFileSystem.RenameFile(tmpPath, filename) == 0) {
+				// La entrada de directorio (el rename) tambien baja a disco:
+				// sobre el ext4 directo de Android/data es durabilidad real.
+				size_t slash = filename.rfind('/');
+				if (slash != std::string::npos)
+					pspFileSystem.SyncDirectory(filename.substr(0, slash));
+				return true;
+			}
+			pspFileSystem.RemoveFile(tmpPath);
+		}
+
+		// Camino directo historico (fallback; tambien cubre content URI,
+		// donde el rename no pisa un destino existente).
+		handle = pspFileSystem.OpenFile(filename, (FileAccess)(FILEACCESS_WRITE | FILEACCESS_CREATE | FILEACCESS_TRUNCATE));
 		if (handle < 0)
 			return false;
 
@@ -447,6 +480,22 @@ int SavedataParam::Save(SceUtilitySavedataParam* param, const std::string &saveD
 		}
 	}
 
+	// STV parche 15: barrer huerfanos .stvtmp de un corte a mitad de guardado
+	// anterior. El juego puede enumerar su directorio via sceIoDread y verlos
+	// (GetFilesList ya los saltea solo por las minusculas del sufijo).
+	{
+		bool dirExiste = false;
+		auto listado = pspFileSystem.GetDirListing(dirPath, &dirExiste);
+		if (dirExiste) {
+			for (const auto &f : listado) {
+				if (f.type != FILETYPE_DIRECTORY && endsWith(f.name, ".stvtmp")) {
+					WARN_LOG(Log::sceUtility, "Savedata: barriendo huerfano %s", f.name.c_str());
+					pspFileSystem.RemoveFile(dirPath + "/" + f.name);
+				}
+			}
+		}
+	}
+
 	u8* cryptedData = nullptr;
 	int cryptedSize = 0;
 	u8 cryptedHash[0x10]{};
@@ -549,9 +598,22 @@ int SavedataParam::Save(SceUtilitySavedataParam* param, const std::string &saveD
 	}
 
 	ClearSFOCache();
-	WritePSPFile(sfopath, sfoData, (SceSize)sfoSize);
-	delete[] sfoData;
-	sfoData = nullptr;
+
+	// STV parche 15 (F11b): el PARAM.SFO va ULTIMO — es el registro de
+	// compromiso (lleva SAVEDATA_FILE_LIST con el hash de los datos). Con
+	// datos primero y SFO al final, un corte deja el par viejo coherente o
+	// el nuevo completo; el orden historico (SFO primero) podia dejar un SFO
+	// nuevo describiendo datos viejos o inexistentes. NO es una transaccion:
+	// commitea archivo por archivo dentro de UNA llamada Save (una partida
+	// multi-archivo son varias llamadas; staging por directorio = deuda).
+	// GUARDA DE MODO DE CIFRADO (veredicto F11b): si el SFO en disco dice
+	// modo 0 y este guardado va CIFRADO, el orden nuevo convertiria un corte
+	// en corrupcion silenciosa al cargar (LoadNotCryptedSave devolveria el
+	// ciphertext como si fuera la partida): en esa unica esquina se conserva
+	// el orden historico, que ahi degrada mejor.
+	bool sfoPrimero = !wasCrypted && cryptedData != nullptr;
+	if (sfoPrimero)
+		WritePSPFile(sfopath, sfoData, (SceSize)sfoSize);
 
 	if(param->dataBuf.IsValid())	// Can launch save without save data in mode 13
 	{
@@ -582,10 +644,17 @@ int SavedataParam::Save(SceUtilitySavedataParam* param, const std::string &saveD
 			if (!WritePSPFile(filePath, data_, saveSize)) {
 				ERROR_LOG(Log::sceUtility, "Error writing file %s", filePath.c_str());
 				delete[] cryptedData;
+				cryptedData = nullptr;
+				// STV parche 15: con el SFO al final, en este camino de error
+				// el SFO nuevo no se escribio (correcto: no hay commit) y su
+				// buffer hay que liberarlo aca.
+				delete[] sfoData;
+				sfoData = nullptr;
 				return SCE_UTILITY_SAVEDATA_ERROR_SAVE_MS_NOSPACE;
 			}
-		}	
+		}
 		delete[] cryptedData;
+		cryptedData = nullptr;
 	}
 
 	// SAVE ICON0
@@ -612,6 +681,13 @@ int SavedataParam::Save(SceUtilitySavedataParam* param, const std::string &saveD
 			WritePSPFile(snd0path, param->snd0FileData.buf, param->snd0FileData.size);
 		}
 	}
+
+	// STV parche 15: el punto de compromiso — el SFO se escribe recien ahora
+	// (salvo la esquina de la guarda de cifrado, que ya lo escribio arriba).
+	if (!sfoPrimero)
+		WritePSPFile(sfopath, sfoData, (SceSize)sfoSize);
+	delete[] sfoData;
+	sfoData = nullptr;
 	return 0;
 }
 

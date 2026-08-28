@@ -140,6 +140,14 @@ public:
 	virtual std::vector<PSPFileInfo> GetDirListing(std::string_view path, bool *exists = nullptr) = 0;
 	virtual int      OpenFile(std::string filename, FileAccess access, const char *devicename = nullptr) = 0;
 	virtual void     CloseFile(u32 handle) = 0;
+	// STV parche 15: baja a disco el contenido de un handle abierto (fsync).
+	// Default no-op VERDADERO: en filesystems de solo-lectura (ISO/VFS) o
+	// virtuales no hay nada que sincronizar y el que llama no debe tratar
+	// eso como fallo. Solo DirectoryFileSystem hace trabajo real.
+	virtual bool     SyncFile(u32 handle) { return true; }
+	// STV parche 15: baja a disco la ENTRADA de directorio (tras un rename).
+	// Mismo contrato que SyncFile: default no-op verdadero, best-effort.
+	virtual bool     SyncDirectory(const std::string &dirname) { return true; }
 	virtual size_t   ReadFile(u32 handle, u8 *pointer, s64 size) = 0;
 	virtual size_t   ReadFile(u32 handle, u8 *pointer, s64 size, int &usec) = 0;
 	virtual size_t   WriteFile(u32 handle, const u8 *pointer, s64 size) = 0;
