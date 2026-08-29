@@ -10,6 +10,7 @@
 
 #include "Common/CommonTypes.h"
 #include "Common/Log.h"
+#include "Common/TimeUtil.h"
 #include "Common/Math/math_util.h"
 #include "Common/Swap.h"
 #include "Core/HW/Display.h"
@@ -292,6 +293,24 @@ void GranularMixer::Dequeue(Granule *granule) {
 			next_tail = head - gap;
 			underruns_++;
 			m_queue_looping.store(true, std::memory_order_relaxed);
+			// STV F10b (2026-08-29): RASTRO CON MARCA DE TIEMPO.
+			// El underrun no dejaba NINGUN rastro: el unico testigo era un
+			// contador que solo se veia en un overlay diminuto, imposible de
+			// leer jugando. Sin marca de tiempo tampoco se podia correlacionar
+			// el corte con la frecuencia del CPU, que es lo que decide si subir
+			// el reloj sirve o es placebo.
+			// Corre en el hilo del callback de audio, asi que va con limite de
+			// tasa: como mucho una linea cada 500 ms. El gap re-reproducido son
+			// gap*128 muestras, o sea la duracion exacta del bucle audible.
+			{
+				const double ahora = time_now_d();
+				if (ahora - lastUnderrunLog_ >= 0.5) {
+					WARN_LOG(Log::Audio, "STVAUDIO: underrun #%d (cola %u gran, objetivo %u, bucle %.1f ms)",
+						underruns_, granule_queue_size, m_granule_queue_size.load(std::memory_order_relaxed),
+						gap * 128 * 1000.0f / 44100.0f);
+					lastUnderrunLog_ = ahora;
+				}
+			}
 		} else {
 			// Send a zero granule.
 			std::fill(granule->begin(), granule->end(), StereoPair{ 0.0f, 0.0f });

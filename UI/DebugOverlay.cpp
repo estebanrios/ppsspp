@@ -63,7 +63,10 @@ static void DrawAudioDebugStats(UIContext *ctx, const Bounds &bounds) {
 
 	ctx->Flush();
 	ctx->BindFontTexture();
-	ctx->Draw()->SetFontScale(0.5f, 0.5f);
+	// STV F10b (2026-08-29): 0.5 era ilegible en el panel de 5 pulgadas de
+	// esta consola (720x1280): el usuario no podia leer los numeros jugando,
+	// que es justo cuando hacen falta. A 1.0 se leen.
+	ctx->Draw()->SetFontScale(1.0f, 1.0f);
 	ctx->Draw()->DrawTextRect(ubuntu24, statbuf, bounds.x + 11, bounds.y + 31, bounds.w - 20, bounds.h - 30, 0xc0000000, FLAG_DYNAMIC_ASCII);
 	ctx->Draw()->DrawTextRect(ubuntu24, statbuf, bounds.x + 10, bounds.y + 30, bounds.w - 20, bounds.h - 30, 0xFFFFFFFF, FLAG_DYNAMIC_ASCII);
 

@@ -60,19 +60,23 @@ void System_AudioGetDebugStats(char *buf, size_t bufSize) {
 			// muestras a tiempo.
 			GranularStats st;
 			g_granular.GetStats(&st);
+			// STV F10b (2026-08-29): NO se muestran queuedGranulesMin/Max: GetStats
+			// los RESETEA en cada lectura (a 10000/0), asi que en pantalla se leian
+			// esos defaults y no un dato. Queda lo estable y lo que decide:
+			//  - under/over ACUMULADOS de la sesion (under = huecos que hubo que
+			//    rellenar repitiendo; over = veces que el productor desbordo).
+			//  - cola suavizada CONTRA el objetivo: si vive por debajo, el colchon
+			//    nunca se llena y los cortes son inevitables.
+			//  - bucle: 1 = ahora mismo esta repitiendo audio (el "robot").
 			snprintf(buf, bufSize,
-				"Granular: under %d / over %d\n"
-				"Cola: %d..%d gran (suave %0.2f)\n"
-				"Objetivo: %d gran / %d muestras (max %d)\n"
-				"Latencia: %d ms   fade %0.2f   bucle %d\n"
-				"Lectura: %0.0f muestras   cuadro %0.1f ms",
+				"AUDIO  under %d   over %d\n"
+				"cola %.1f / %d gran   %d ms\n"
+				"bucle %d   fade %.2f   cuadro %.1f ms",
 				st.underruns, st.overruns,
-				st.queuedGranulesMin, st.queuedGranulesMax, st.smoothedQueuedGranules,
-				st.targetQueueSize, st.queuedSamplesTarget, st.maxQueuedGranules,
+				st.smoothedQueuedGranules, st.targetQueueSize,
 				(int)(st.smoothedQueuedGranules * (GranularMixer::GRANULE_SIZE * 1000.0 / 44100.0)),
-				st.fadeVolume, st.looping ? 1 : 0,
-				st.smoothedReadSize, st.frameTimeEstimate * 1000.0f);
-		} else {
+				st.looping ? 1 : 0, st.fadeVolume, st.frameTimeEstimate * 1000.0f);
+			} else {
 			g_resampler.GetAudioDebugStats(buf, bufSize);
 		}
 	} else {

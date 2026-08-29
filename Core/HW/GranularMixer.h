@@ -110,6 +110,7 @@ private:
 
 	float m_fade_volume = 1.0;
 	int underruns_ = 0;
+	double lastUnderrunLog_ = 0.0;   // STV F10b: limite de tasa del log de underrun
 	int overruns_ = 0;
 	int queuedGranulesMin_ = 10000;
 	int queuedGranulesMax_ = 0;
