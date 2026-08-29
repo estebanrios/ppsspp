@@ -236,9 +236,18 @@ void StereoResampler::Mix(s16 *samples, unsigned int numSamples, bool consider_f
 	outputSampleCount_ += currentSample / 2;
 
 	// Padding with the last value to reduce clicking
+	// STV F10b (2026-08-28): los canales estaban CRUZADOS. buffer_ es
+	// intercalado L,R,L,R (indice par = izquierdo, impar = derecho: lo fija el
+	// lazo de arriba, que lee l1 en indexR y r1 en indexR+1) e indexR es
+	// siempre PAR. El codigo tomaba s[0] de indexR-1 (IMPAR = derecho) y lo
+	// escribia en samples[currentSample] (PAR = izquierdo de salida), y al
+	// reves con s[1]. O sea: durante todo el relleno de underrun el estereo
+	// quedaba invertido, sumando un salto de imagen al click que este padding
+	// existe para disimular. Se nota con audio panoramizado (un disparo a la
+	// derecha se rellena en el canal contrario).
 	short s[2];
-	s[0] = clamp_s16(buffer_[(indexR - 1) & INDEX_MASK]);
-	s[1] = clamp_s16(buffer_[(indexR - 2) & INDEX_MASK]);
+	s[0] = clamp_s16(buffer_[(indexR - 2) & INDEX_MASK]);
+	s[1] = clamp_s16(buffer_[(indexR - 1) & INDEX_MASK]);
 	for (; currentSample < numSamples * 2; currentSample += 2) {
 		samples[currentSample] = s[0];
 		samples[currentSample + 1] = s[1];

@@ -50,6 +50,12 @@ public:
 
 	void GetStats(GranularStats *stats);
 
+	// STV F10b: descartar el audio en vuelo (cambio de juego, carga de
+	// savestate). Sin esto, System_AudioClear solo limpiaba el resampler
+	// clasico y hasta ~61 ms del audio ANTERIOR se reproducian sobre la
+	// escena nueva. Ver Core/HW/GranularMixer.cpp.
+	void Clear();
+
 	static constexpr u32 GRANULE_SIZE = 256;
 
 private:

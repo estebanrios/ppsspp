@@ -80,7 +80,22 @@ void GranularMixer::Mix(s16 *samples, u32 num_samples, int outSampleRate, float 
 	if (!samples)
 		return;
 	memset(samples, 0, num_samples * 2 * sizeof(s16));
-	frameTimeEstimate_ = 1.0f / fpsEstimate;
+	// STV F10b (2026-08-28): GUARDA CONTRA fpsEstimate <= 0.
+	// DisplayHWInit() pone flips = 0 en CADA arranque de juego, y
+	// __DisplayGetFPS devuelve ese 0 hasta el primer DisplayFireFlip, que en
+	// una carga larga tarda SEGUNDOS - mientras el juego ya emite audio. En esa
+	// ventana 1.0f/0.0f daba +inf y el std::llround(frameTimeEstimate_ * ...)
+	// de mas abajo es comportamiento INDEFINIDO sobre +inf. En ARM64 satura a
+	// INT64_MAX, cuyo truncado a u32 envuelve la suma y deja el colchon en
+	// ~2047 muestras en vez de ~2783: el buffer MAS CHICO justo en la ventana
+	// de carga, que es cuando mas huecos hay. 60 fps es el default correcto
+	// para PSP; ante un valor no finito se conserva el ultimo estimado bueno.
+	if (!std::isfinite(fpsEstimate) || fpsEstimate <= 1.0f) {
+		if (!std::isfinite(frameTimeEstimate_) || frameTimeEstimate_ <= 0.0f)
+			frameTimeEstimate_ = 1.0f / 60.0f;
+	} else {
+		frameTimeEstimate_ = 1.0f / fpsEstimate;
+	}
 
 	smoothedReadSize_ = smoothedReadSize_ == 0 ? num_samples : (smoothedReadSize_ * 0.95f + num_samples * 0.05f);
 
@@ -287,6 +302,30 @@ void GranularMixer::Dequeue(Granule *granule) {
 
 	*granule = m_queue[tail & GRANULE_QUEUE_MASK];
 	m_queue_tail.store(next_tail, std::memory_order_release);
+}
+
+// STV F10b (2026-08-28): descarta el audio en vuelo.
+// POR QUE: System_AudioClear() solo llamaba a g_resampler.Clear(), asi que el
+// mixer granular conservaba sus colas. __AudioDoState lo invoca al LEER un
+// savestate y __AudioInit al arrancar un juego, de modo que hasta ~61 ms del
+// audio anterior (21 granulos x 128 muestras con el dimensionado de esta
+// consola) se reproducian DESPUES de la carga, sobre la escena nueva. Ademas
+// contaminaba el banco de pruebas, cuyas corridas arrancan cargando un
+// savestate: el primer instante de cada medicion traia audio del estado previo.
+// Se dejan los contadores acumulados (underruns_/overruns_) a proposito: son
+// telemetria de la sesion, no estado de reproduccion.
+void GranularMixer::Clear() {
+	m_queue_head.store(0, std::memory_order_relaxed);
+	m_queue_tail.store(0, std::memory_order_relaxed);
+	m_queue_looping.store(false, std::memory_order_relaxed);
+	m_next_buffer_index = 0;
+	m_current_index = 0;
+	m_fade_volume = 1.0f;
+	m_next_buffer = Granule{};
+	m_front = Granule{};
+	m_back = Granule{};
+	queuedGranulesMin_ = 10000;
+	queuedGranulesMax_ = 0;
 }
 
 void GranularMixer::GetStats(GranularStats *stats) {

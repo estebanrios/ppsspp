@@ -47,7 +47,31 @@ void NativeMix(int16_t *outStereo, int numFrames, int sampleRateHz, void *userda
 void System_AudioGetDebugStats(char *buf, size_t bufSize) {
 	if (buf) {
 		if (g_Config.iAudioPlaybackMode == (int)AudioSyncMode::GRANULAR) {
-			snprintf(buf, bufSize, "(No stats available for granular yet)");
+			// STV F10b (2026-08-28): EL INSTRUMENTO ESTABA TAPADO.
+			// GranularMixer ya acumulaba underruns_/overruns_ y el estado de la
+			// cola, pero el unico lector era la ventana ImGui del ImDebugger,
+			// que en esta consola no se maneja con el pad: el overlay de texto
+			// imprimia "(No stats available for granular yet)" y era imposible
+			// saber, sin escribir codigo, si un artefacto venia de un hueco
+			// real o del propio relleno por repeticion. Con esto, poner
+			// DebugOverlay=5 en el ini alcanza para verlo en pantalla.
+			// "bucle" es el dato que importa para el pico: cuando esta en 1, el
+			// mixer esta repitiendo granulos porque el emulador no entrego
+			// muestras a tiempo.
+			GranularStats st;
+			g_granular.GetStats(&st);
+			snprintf(buf, bufSize,
+				"Granular: under %d / over %d\n"
+				"Cola: %d..%d gran (suave %0.2f)\n"
+				"Objetivo: %d gran / %d muestras (max %d)\n"
+				"Latencia: %d ms   fade %0.2f   bucle %d\n"
+				"Lectura: %0.0f muestras   cuadro %0.1f ms",
+				st.underruns, st.overruns,
+				st.queuedGranulesMin, st.queuedGranulesMax, st.smoothedQueuedGranules,
+				st.targetQueueSize, st.queuedSamplesTarget, st.maxQueuedGranules,
+				(int)(st.smoothedQueuedGranules * (GranularMixer::GRANULE_SIZE * 1000.0 / 44100.0)),
+				st.fadeVolume, st.looping ? 1 : 0,
+				st.smoothedReadSize, st.frameTimeEstimate * 1000.0f);
 		} else {
 			g_resampler.GetAudioDebugStats(buf, bufSize);
 		}
@@ -58,6 +82,10 @@ void System_AudioGetDebugStats(char *buf, size_t bufSize) {
 
 void System_AudioClear() {
 	g_resampler.Clear();
+	// STV F10b: el granular tambien tiene audio en vuelo. Se limpian los DOS
+	// sin mirar el modo activo: limpiar el que no esta en uso no cuesta nada y
+	// evita que un cambio de modo en caliente arrastre audio viejo.
+	g_granular.Clear();
 }
 
 void System_AudioPushSamples(const int32_t *audio, int numSamples, float volume) {
@@ -69,5 +97,6 @@ void System_AudioPushSamples(const int32_t *audio, int numSamples, float volume)
 		}
 	} else {
 		g_resampler.Clear();
+		g_granular.Clear();   // STV F10b: idem, ver System_AudioClear
 	}
 }

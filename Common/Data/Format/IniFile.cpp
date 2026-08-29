@@ -553,19 +553,44 @@ bool IniFile::Save(const Path &filename)
 		FILE *file = File::OpenCFile(tmp, "w");
 		if (file) {
 			escribirTodo(file);
+			// STV F10b: ferror ANTES del sync. escribirTodo usa fprintf y no
+			// mira su retorno; ferror es el testigo acumulado de esos fallos.
+			bool ok = (ferror(file) == 0);
 			// El sync ANTES del rename: al reves, el rename puede publicarse
 			// antes que los datos y el destino queda apuntando a un ini vacio.
-			File::SyncFileHandle(file);
+			// STV F10b: su retorno se DESCARTABA. Si fflush pasa pero fsync
+			// falla con EIO, se publicaba un ini cuyos datos podian no haber
+			// llegado a la tarjeta. Aca el fsync no es higiene: es LA barrera.
+			if (!File::SyncFileHandle(file)) {
+				ok = false;
+			}
 			// fclose COMPROBADO: es donde aparecen los errores de escritura
 			// diferidos (ENOSPC, EIO). Si fallo, el tmp no sirve.
-			if (fclose(file) == 0 && File::Rename(tmp, filename)) {
+			if (fclose(file) != 0) {
+				ok = false;
+			}
+			if (ok && File::Rename(tmp, filename)) {
 				File::SyncDirBestEffort(filename.NavigateUp());
 				return true;
 			}
-			// Camino tmp roto: se limpia el huerfano y se cae a la directa.
+			// Camino tmp roto: se limpia el huerfano.
 			// (fclose ya libero el FILE aunque haya devuelto error.)
 			File::Delete(tmp, true);
+			// STV F10b (2026-08-28): ACA NO SE CAE A LA DIRECTA, Y ESE ES EL FIX.
+			// El tmp se pudo CREAR y aun asi fallo: eso es ENOSPC o EIO, no un
+			// problema de permisos. La directa hace fopen(filename, "w"), que
+			// TRUNCA el ini bueno a cero, y despues vuelve a fallar por la misma
+			// causa — dejando al usuario sin ppsspp.ini y, peor, devolviendo
+			// true. Medido como escenario real: /data de esta consola llega al
+			// 95 %. Perder la config entera (memstick, escala, worker GE,
+			// per-game) porque no habia espacio para reescribirla es
+			// estrictamente peor que no escribir: el ini viejo sigue siendo
+			// valido. El que llama ya trata false como error duro.
+			return false;
 		}
+		// Si NI SIQUIERA se pudo crear el tmp, puede ser un problema de crear
+		// archivos nuevos en ese directorio y no de espacio: ahi la escritura
+		// directa sigue teniendo sentido y se intenta abajo.
 	}
 
 	FILE *file = File::OpenCFile(filename, "w");
@@ -575,6 +600,15 @@ bool IniFile::Save(const Path &filename)
 
 	escribirTodo(file);
 
-	fclose(file);
-	return true;
+	// STV F10b: el camino directo tampoco chequeaba NADA y devolvia true
+	// siempre. Con el archivo ya truncado por el fopen("w"), un fallo aca deja
+	// un ini vacio anunciado como guardado.
+	bool ok = (ferror(file) == 0);
+	if (!File::SyncFileHandle(file)) {
+		ok = false;
+	}
+	if (fclose(file) != 0) {
+		ok = false;
+	}
+	return ok;
 }
