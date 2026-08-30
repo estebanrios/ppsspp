@@ -50,6 +50,9 @@
 #include "Core/HLE/sceNet.h"
 #include "Core/HLE/sceKernelThread.h"
 #include "Core/HLE/sceKernelInterrupt.h"
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#endif
 #include "Core/HW/Display.h"
 #include "Core/Util/PPGeDraw.h"
 #include "Core/RetroAchievements.h"
@@ -512,12 +515,41 @@ static void DoFrameIdleTiming() {
 	}
 }
 
+
+// STV_VPS_v1: medidor de VELOCIDAD DE EMULACION, una linea por segundo.
+//
+// Por que existe: el banco medía fps_efectivos (cuadros presentados) y daba
+// 59,98 tanto con la GPU al 43 % como al 82 %. Estaba midiendo el vsync del
+// compositor, no el emulador -- una metrica saturada que no distingue la mitad
+// del trabajo de GPU no es una metrica. VPS (vblanks EMULADOS por segundo de
+// reloj de pared) sí lo distingue: 60 = a tiempo real, 44 = el juego corre al
+// 73 % de su velocidad.
+//
+// Se enciende con `setprop debug.stv.vps 1`. Apagado no cuesta mas que un
+// entero por vblank; encendido, una lectura de prop y una linea por segundo.
+// Sale por ERROR_LOG a proposito (ver la nota de STVREPLAY en sceCtrl.cpp).
+static void StvVpsPorVblank() {
+	static int cuenta = 0;
+	if (++cuenta < 60)
+		return;
+	cuenta = 0;
+#ifdef __ANDROID__
+	char v[PROP_VALUE_MAX] = {0};
+	if (__system_property_get("debug.stv.vps", v) <= 0 || v[0] != '1')
+		return;
+	float vps = 0.0f, fps = 0.0f, real = 0.0f;
+	__DisplayGetFPS(&vps, &fps, &real);
+	ERROR_LOG(Log::sceDisplay, "STVVPS: vps=%.2f fps_emu=%.2f fps_presentado=%.2f", vps, fps, real);
+#endif
+}
+
 void hleEnterVblank(u64 userdata, int cyclesLate) {
 	// STV_GE_THREAD_v1: el latido del hilo del GE, una vez por vblank: relee
 	// la prop debug.stv.ge, drena terminaciones pendientes y conmuta de nivel
 	// si el worker esta idle. Va ANTES del interrupt de vblank para que las
 	// terminaciones del cuadro queden agendadas antes de despertar al juego.
 	stvge::PorVblank();
+	StvVpsPorVblank();
 
 	int vbCount = userdata;
 

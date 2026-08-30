@@ -117,6 +117,9 @@ const u32 CTRL_EMU_RAPIDFIRE_MASK = CTRL_UP | CTRL_DOWN | CTRL_LEFT | CTRL_RIGHT
 
 // STV F10b: disparador del sistema de Replay por propiedad de Android.
 // Sondea como mucho una vez por segundo (el latch corre 60+ veces por segundo).
+// Los avisos salen por ERROR_LOG A PROPOSITO: el canal sceCtrl esta en nivel
+// error en este aparato, asi que INFO/WARN no se ven por logcat. No es un
+// error, es visibilidad -- bajarlo de nivel vuelve a dejar el instrumento mudo.
 static void StvReplayPoll() {
 	static double ultimo = 0.0;
 	const double ahora = time_now_d();
@@ -141,27 +144,27 @@ static void StvReplayPoll() {
 	if (!strcmp(v, "grabar")) {
 		ReplayAbort();
 		ReplayBeginSave();
-		INFO_LOG(Log::sceCtrl, "STVREPLAY: GRABANDO (soltar con: setprop debug.stv.replay guardar)");
+		ERROR_LOG(Log::sceCtrl, "STVREPLAY: GRABANDO (soltar con: setprop debug.stv.replay guardar)");
 	} else if (!strcmp(v, "guardar")) {
 		if (ReplayIsSaving() && ReplayFlushFile(ruta)) {
-			INFO_LOG(Log::sceCtrl, "STVREPLAY: guardado en %s", ruta.c_str());
+			ERROR_LOG(Log::sceCtrl, "STVREPLAY: guardado en %s", ruta.c_str());
 			ReplayAbort();
 		} else {
 			// NO se aborta: si el guardado fallo (permisos, disco), la
 			// grabacion sigue viva y se puede reintentar. Abortar aca fue
 			// exactamente lo que hizo perder una toma del usuario.
-			WARN_LOG(Log::sceCtrl, "STVREPLAY: FALLO el guardado (grabacion NO abortada, se puede reintentar)");
+			ERROR_LOG(Log::sceCtrl, "STVREPLAY: FALLO el guardado (grabacion NO abortada, se puede reintentar)");
 		}
 	} else if (!strcmp(v, "reproducir")) {
 		ReplayAbort();
 		if (ReplayExecuteFile(ruta)) {
-			INFO_LOG(Log::sceCtrl, "STVREPLAY: REPRODUCIENDO %s", ruta.c_str());
+			ERROR_LOG(Log::sceCtrl, "STVREPLAY: REPRODUCIENDO %s", ruta.c_str());
 		} else {
-			WARN_LOG(Log::sceCtrl, "STVREPLAY: NO se pudo cargar %s", ruta.c_str());
+			ERROR_LOG(Log::sceCtrl, "STVREPLAY: NO se pudo cargar %s", ruta.c_str());
 		}
 	} else if (!strcmp(v, "parar")) {
 		ReplayAbort();
-		INFO_LOG(Log::sceCtrl, "STVREPLAY: detenido");
+		ERROR_LOG(Log::sceCtrl, "STVREPLAY: detenido");
 	}
 }
 
