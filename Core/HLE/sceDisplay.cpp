@@ -516,31 +516,63 @@ static void DoFrameIdleTiming() {
 }
 
 
-// STV_VPS_v1: medidor de VELOCIDAD DE EMULACION, una linea por segundo.
+// STV_VPS_v2: medidor de VELOCIDAD DE EMULACION que cuenta contra SU PROPIO
+// reloj.
 //
 // Por que existe: el banco medía fps_efectivos (cuadros presentados) y daba
 // 59,98 tanto con la GPU al 43 % como al 82 %. Estaba midiendo el vsync del
 // compositor, no el emulador -- una metrica saturada que no distingue la mitad
 // del trabajo de GPU no es una metrica. VPS (vblanks EMULADOS por segundo de
-// reloj de pared) sí lo distingue: 60 = a tiempo real, 44 = el juego corre al
-// 73 % de su velocidad.
+// pared) sí lo distingue: 60 = a tiempo real, 44 = el juego va al 73 %.
 //
-// Se enciende con `setprop debug.stv.vps 1`. Apagado no cuesta mas que un
-// entero por vblank; encendido, una lectura de prop y una linea por segundo.
-// Sale por ERROR_LOG a proposito (ver la nota de STVREPLAY en sceCtrl.cpp).
+// Por que NO usa __DisplayGetVPS: esa funcion devuelve una estatica que
+// CalculateFPS solo refresca cuando pasa 1 s entero, y CalculateFPS cuelga del
+// mismo camino del vblank emulado. Muestrearla cada N vblanks repite unas
+// lecturas y se saltea otras, y durante un tiron -- justo lo que se persigue --
+// informa el valor de ANTES del tiron. Aca se cuentan los vblanks propios y se
+// divide por el tiempo de pared propio: cada muestra cubre su intervalo
+// completo, sin huecos ni repeticiones. Misma leccion que el anclaje de ventana
+// de analizar-fps.py: anclar al reloj del propio instrumento.
+//
+// Ventana de 0,5 s para que una corrida de 15 s deje ~30 muestras y se puedan
+// mirar los PEORES percentiles, no solo la media.
+//
+// Se enciende con `setprop debug.stv.vps 1`. Sale por ERROR_LOG a proposito
+// (ver la nota de STVREPLAY en sceCtrl.cpp): los canales de INFO estan
+// filtrados en este aparato y un instrumento que no se ve es un instrumento
+// mudo.
 static void StvVpsPorVblank() {
-	static int cuenta = 0;
-	if (++cuenta < 60)
+	static u64 vblanks = 0;
+	static u64 v0 = 0;
+	static double t0 = 0.0;
+	static int prop = -1;
+
+	++vblanks;
+	const double ahora = time_now_d();
+	if (t0 == 0.0) {
+		t0 = ahora;
+		v0 = vblanks;
 		return;
-	cuenta = 0;
+	}
+	const double dt = ahora - t0;
+	if (dt < 0.5)
+		return;
+
 #ifdef __ANDROID__
+	// La prop se relee en cada ventana (0,5 s), no por vblank.
 	char v[PROP_VALUE_MAX] = {0};
-	if (__system_property_get("debug.stv.vps", v) <= 0 || v[0] != '1')
-		return;
-	float vps = 0.0f, fps = 0.0f, real = 0.0f;
-	__DisplayGetFPS(&vps, &fps, &real);
-	ERROR_LOG(Log::sceDisplay, "STVVPS: vps=%.2f fps_emu=%.2f fps_presentado=%.2f", vps, fps, real);
+	prop = (__system_property_get("debug.stv.vps", v) > 0 && v[0] == '1') ? 1 : 0;
+	if (prop == 1) {
+		const double vps = (double)(vblanks - v0) / dt;
+		float fvps = 0.0f, femu = 0.0f, freal = 0.0f;
+		__DisplayGetFPS(&fvps, &femu, &freal);
+		// vps=  el propio, honesto. vps_ppsspp= el de la casa, para contrastar.
+		ERROR_LOG(Log::sceDisplay, "STVVPS: vps=%.2f vblanks=%llu dt=%.3f vps_ppsspp=%.2f presentado=%.2f",
+			vps, (unsigned long long)(vblanks - v0), dt, fvps, freal);
+	}
 #endif
+	t0 = ahora;
+	v0 = vblanks;
 }
 
 void hleEnterVblank(u64 userdata, int cyclesLate) {
