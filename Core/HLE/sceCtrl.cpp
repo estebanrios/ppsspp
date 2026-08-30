@@ -26,7 +26,10 @@
 #include "Core/HLE/ErrorCodes.h"
 #include "Core/HLE/FunctionWrappers.h"
 #include "Common/File/Path.h"
+#include "Common/File/FileUtil.h"
 #include <string>
+#include <vector>
+#include <cstdio>
 #include <cstring>
 #include <sys/system_properties.h>
 #include "Common/TimeUtil.h"
@@ -117,6 +120,71 @@ const u32 CTRL_EMU_RAPIDFIRE_MASK = CTRL_UP | CTRL_DOWN | CTRL_LEFT | CTRL_RIGHT
 
 // STV F10b: disparador del sistema de Replay por propiedad de Android.
 // Sondea como mucho una vez por segundo (el latch corre 60+ veces por segundo).
+// STV F10b: reproduce una grabacion DESPLAZANDO sus marcas de tiempo al
+// momento actual del emulador.
+//
+// Por que hace falta: ReplayExecuteCtrl consume de una todos los eventos cuyo
+// timestamp ya paso (Core/Replay.cpp:358). Las marcas son el reloj del
+// emulador, que al cargar un savestate se restaura al valor guardado ahi y
+// despues avanza a velocidad variable. O sea que el momento en que uno manda
+// "reproducir" cae en un t distinto en cada corrida, y con las marcas crudas la
+// grabacion se aplica de golpe (o a destiempo). Desplazandolas, la jugada
+// empieza SIEMPRE medio segundo despues de la orden, sin importar cuando se
+// cargo la partida ni a que velocidad venia el emulador.
+//
+// Trabaja sobre los bytes crudos a proposito: ReplayItemHeader es privado de
+// Replay.cpp. El formato v1 es cabecera de 32 bytes + items de 17 (accion u8 +
+// timestamp u64 LE + 8 de union), y se verifica que el tamaño cierre antes de
+// tocar nada.
+static bool StvReplayReproducirDesplazado(const Path &ruta) {
+	FILE *f = File::OpenCFile(ruta, "rb");
+	if (!f)
+		return false;
+	fseek(f, 0, SEEK_END);
+	long tam = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	if (tam <= 32) { fclose(f); return false; }
+	std::vector<uint8_t> todo((size_t)tam);
+	size_t leidos = fread(todo.data(), 1, (size_t)tam, f);
+	fclose(f);
+	if (leidos != (size_t)tam)
+		return false;
+	if (memcmp(todo.data(), "PPREPLAY", 8) != 0) {
+		ERROR_LOG(Log::sceCtrl, "STVREPLAY: cabecera invalida");
+		return false;
+	}
+
+	const size_t CAB = 32, ITEM = 17;
+	const size_t cuerpo = todo.size() - CAB;
+	if (cuerpo % ITEM != 0) {
+		// Un replay con datos de disco trae items de tamaño variable; ese caso
+		// no se desplaza (se cae al camino normal) en vez de corromperlo.
+		ERROR_LOG(Log::sceCtrl, "STVREPLAY: %zu bytes de items no son multiplo de %zu; sin desplazar",
+			cuerpo, ITEM);
+		return ReplayExecuteFile(ruta);
+	}
+
+	std::vector<uint8_t> items(todo.begin() + CAB, todo.end());
+	const size_t n = items.size() / ITEM;
+	uint64_t minimo = UINT64_MAX;
+	for (size_t i = 0; i < n; ++i) {
+		uint64_t t;
+		memcpy(&t, &items[i * ITEM + 1], sizeof(t));
+		if (t < minimo) minimo = t;
+	}
+	const uint64_t ahora = CoreTiming::GetGlobalTimeUs();
+	const uint64_t base = ahora + 500000;   // medio segundo de margen
+	for (size_t i = 0; i < n; ++i) {
+		uint64_t t;
+		memcpy(&t, &items[i * ITEM + 1], sizeof(t));
+		t = base + (t - minimo);
+		memcpy(&items[i * ITEM + 1], &t, sizeof(t));
+	}
+	ERROR_LOG(Log::sceCtrl, "STVREPLAY: %zu eventos desplazados de t=%llu a t=%llu",
+		n, (unsigned long long)minimo, (unsigned long long)base);
+	return ReplayExecuteBlob(1, items);
+}
+
 // Los avisos salen por ERROR_LOG A PROPOSITO: el canal sceCtrl esta en nivel
 // error en este aparato, asi que INFO/WARN no se ven por logcat. No es un
 // error, es visibilidad -- bajarlo de nivel vuelve a dejar el instrumento mudo.
@@ -157,7 +225,7 @@ static void StvReplayPoll() {
 		}
 	} else if (!strcmp(v, "reproducir")) {
 		ReplayAbort();
-		if (ReplayExecuteFile(ruta)) {
+		if (StvReplayReproducirDesplazado(ruta)) {
 			ERROR_LOG(Log::sceCtrl, "STVREPLAY: REPRODUCIENDO %s", ruta.c_str());
 		} else {
 			ERROR_LOG(Log::sceCtrl, "STVREPLAY: NO se pudo cargar %s", ruta.c_str());
