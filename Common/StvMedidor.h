@@ -128,6 +128,14 @@ enum Ranura : int {
 	R_CAND_MEMOP,       // PerformMemoryCopy/Set/WriteFormatted/WriteStencil
 	R_CAND_DISPLAY,     // SetDisplayFramebuffer/Prepare-/CopyDisplayToOutput
 	R_CAND_LISTA,       // DequeueList/Continue/Break/BusyDrawing/PSPFrame
+	// --- TRABAJO del EmuThread (no espera). Se instrumenta porque cpuEmu es el
+	// UNICO campo que correlaciona con la caida de VPS (r=-0,89 sobre 222
+	// ventanas): sube de 12,6 a 19,6 ms en los cuadros malos. Estas ranuras
+	// dicen QUE son esos 7 ms extra.
+	R_T_JIT,            // MIPSComp::IRJit::Compile  (compilar codigo nuevo)
+	R_T_ATRAC,          // Atrac2::DecodeInternal    (decodificar audio)
+	R_T_TEXTURA,        // TextureCacheCommon::SetTextureFramebuffer
+	R_T_BLOCKXFER,      // GPUCommon::DoBlockTransfer (copias de VRAM)
 	R_NUM
 };
 
@@ -141,6 +149,7 @@ inline const char *const kNombre[] = {
 	"rd_cola", "rd_acquire", "rd_present", "rd_readback",
 	"sas_drain",
 	"cand_interrupt", "cand_invalidate", "cand_memop", "cand_display", "cand_lista",
+	"T_jit", "T_atrac", "T_textura", "T_blockxfer",
 };
 // Si alguien agrega una ranura y se olvida el nombre, que rompa la compilacion
 // y no que el volcado imprima el nombre de la ranura de al lado.

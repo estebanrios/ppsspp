@@ -15,6 +15,7 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "Common/StvMedidor.h"
 #include "ppsspp_config.h"
 
 #include <algorithm>
@@ -1182,6 +1183,7 @@ bool TextureCacheCommon::MatchFramebuffer(
 }
 
 void TextureCacheCommon::SetTextureFramebuffer(const AttachCandidate &candidate) {
+	stvmed::Cronometro cronStv(stvmed::R_T_TEXTURA);
 	VirtualFramebuffer *framebuffer = candidate.fb;
 	RasterChannel channel = candidate.channel;
 

@@ -15,6 +15,7 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "Common/StvMedidor.h"
 #include "ppsspp_config.h"
 #include <set>
 #include <algorithm>
@@ -112,6 +113,7 @@ void IRJit::InvalidateCacheAt(u32 em_address, int length) {
 }
 
 void IRJit::Compile(u32 em_address) {
+	stvmed::Cronometro cronStv(stvmed::R_T_JIT);
 	_dbg_assert_(compilerEnabled_);
 
 	PROFILE_THIS_SCOPE("jitc");

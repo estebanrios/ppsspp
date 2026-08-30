@@ -1,3 +1,4 @@
+#include "Common/StvMedidor.h"
 #include "ppsspp_config.h"
 
 #include <algorithm>  // std::remove
@@ -1761,6 +1762,7 @@ void GPUCommon::SetCmdValue(u32 op) {
 }
 
 void GPUCommon::DoBlockTransfer(u32 skipDrawReason) {
+	stvmed::Cronometro cronStv(stvmed::R_T_BLOCKXFER);
 	u32 srcBasePtr = gstate.getTransferSrcAddress();
 	u32 srcStride = gstate.getTransferSrcStride();
 

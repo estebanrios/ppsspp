@@ -1,3 +1,4 @@
+#include "Common/StvMedidor.h"
 #include <algorithm>
 
 #include "Common/Serialize/Serializer.h"
@@ -807,6 +808,7 @@ u32 Atrac2::DecodeData(u8 *outbuf, u32 outbufAddr, int *SamplesNum, int *finish,
 }
 
 u32 Atrac2::DecodeInternal(u32 outbufAddr, int *SamplesNum, int *finish) {
+	stvmed::Cronometro cronStv(stvmed::R_T_ATRAC);
 	SceAtracIdInfo &info = context_->info;
 
 	// Check that there's enough data to decode.
