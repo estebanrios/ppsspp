@@ -2,6 +2,7 @@
 
 #include "VulkanFrameData.h"
 #include "Common/Log.h"
+#include "Common/StvMedidor.h"  // STV_MEDIDOR_ESPERAS_v1
 #include "Common/StringUtils.h"
 
 #if 0 // def _DEBUG
@@ -78,7 +79,11 @@ void FrameData::AcquireNextImage(VulkanContext *vulkan) {
 	_dbg_assert_(!hasAcquired);
 
 	// Get the index of the next available swapchain image, and a semaphore to block command buffer execution on.
-	VkResult res = vkAcquireNextImageKHR(vulkan->GetDevice(), vulkan->GetSwapchain(), UINT64_MAX, acquireSemaphore, (VkFence)VK_NULL_HANDLE, &curSwapchainImage);
+	VkResult res;
+	{
+		stvmed::Cronometro c(stvmed::R_RD_ACQUIRE);  // STV: presentacion FIFO conteniendo al productor
+		res = vkAcquireNextImageKHR(vulkan->GetDevice(), vulkan->GetSwapchain(), UINT64_MAX, acquireSemaphore, (VkFence)VK_NULL_HANDLE, &curSwapchainImage);
+	}
 	switch (res) {
 	case VK_SUCCESS:
 		hasAcquired = true;
@@ -254,6 +259,7 @@ void FrameData::Submit(VulkanContext *vulkan, FrameSubmitType type, FrameDataSha
 
 	if (type == FrameSubmitType::Sync) {
 		// Hard stall of the GPU, not ideal, but necessary so the CPU has the contents of the readback.
+		stvmed::Cronometro c(stvmed::R_RD_READBACK);  // STV: la Mali vaciandose para un readback
 		vkWaitForFences(vulkan->GetDevice(), 1, &sharedData.readbackFence, true, UINT64_MAX);
 		vkResetFences(vulkan->GetDevice(), 1, &sharedData.readbackFence);
 		syncDone = true;

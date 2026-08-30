@@ -10,6 +10,7 @@
 #include "Common/GPU/Vulkan/VulkanAlloc.h"
 #include "Common/GPU/Vulkan/VulkanContext.h"
 #include "Common/GPU/Vulkan/VulkanRenderManager.h"
+#include "Common/StvMedidor.h"  // STV_MEDIDOR_ESPERAS_v1
 
 #include "Common/LogReporting.h"
 #include "Common/Thread/ThreadUtil.h"
@@ -610,12 +611,14 @@ void VulkanRenderManager::CompileThreadFunc() {
 
 void VulkanRenderManager::RenderThreadFunc() {
 	SetCurrentThreadName("VulkanRenderMan");
+	stvmed::MarcarRol(stvmed::ROL_RENDER);  // STV_MEDIDOR_ESPERAS_v1
 	while (true) {
 		_dbg_assert_(useRenderThread_);
 
 		// Pop a task of the queue and execute it.
 		VKRRenderThreadTask *task = nullptr;
 		{
+			stvmed::Cronometro c(stvmed::R_RD_COLA);  // STV: render thread OCIOSO (espera legitima)
 			std::unique_lock<std::mutex> lock(pushMutex_);
 			while (renderThreadQueue_.empty()) {
 				pushCondVar_.wait(lock);
@@ -707,6 +710,7 @@ void VulkanRenderManager::BeginFrame(bool enableProfiling, bool enableLogProfile
 	// Makes sure the submission from the previous time around has happened. Otherwise
 	// we are not allowed to wait from another thread here..
 	if (useRenderThread_) {
+		stvmed::Cronometro c(stvmed::R_FENCE_CV);  // STV: espera a que el render thread haya submiteado
 		std::unique_lock<std::mutex> lock(frameData.fenceMutex);
 		while (!frameData.readyForFence) {
 			frameData.fenceCondVar.wait(lock);
@@ -716,8 +720,11 @@ void VulkanRenderManager::BeginFrame(bool enableProfiling, bool enableLogProfile
 
 	// This must be the very first Vulkan call we do in a new frame.
 	// Makes sure the very last command buffer from the frame before the previous has been fully executed.
-	if (vkWaitForFences(device, 1, &frameData.fence, true, UINT64_MAX) == VK_ERROR_DEVICE_LOST) {
-		_assert_msg_(false, "Device lost in vkWaitForFences");
+	{
+		stvmed::Cronometro c(stvmed::R_FENCE_VK);  // STV: la GPU del cuadro de hace iInflightFrames
+		if (vkWaitForFences(device, 1, &frameData.fence, true, UINT64_MAX) == VK_ERROR_DEVICE_LOST) {
+			_assert_msg_(false, "Device lost in vkWaitForFences");
+		}
 	}
 	vkResetFences(device, 1, &frameData.fence);
 
@@ -1715,6 +1722,11 @@ void VulkanRenderManager::FlushSync() {
 		}
 
 		{
+			// STV_MEDIDOR_ESPERAS_v1: LA PARADA DURA. Un readback bloqueante
+			// vacia el pipeline entero: el hilo que llama (EmuThread O worker,
+			// el rol lo separa) se queda quieto hasta que la Mali termino TODO
+			// lo encolado. Si el cuadro no solapa, es el primer sospechoso.
+			stvmed::Cronometro c(stvmed::R_FLUSHSYNC);
 			std::unique_lock<std::mutex> lock(syncMutex_);
 			// Wait for the flush to be hit, since we're syncing.
 			while (!frameData.syncDone) {

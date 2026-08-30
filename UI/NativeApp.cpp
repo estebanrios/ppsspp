@@ -117,6 +117,7 @@
 
 #include "GPU/GPUCommon.h"
 #include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
+#include "Common/StvMedidor.h"  // STV_MEDIDOR_ESPERAS_v1
 #include "GPU/Common/PresentationCommon.h"
 #include "UI/AudioCommon.h"
 #include "UI/Background.h"
@@ -1009,6 +1010,12 @@ void NativeFrame(GraphicsContext *graphicsContext) {
 		g_restartGraphics = 0;
 	}
 
+	// STV_MEDIDOR_ESPERAS_v1: EL unico punto por cuadro. Cierra el cuadro
+	// anterior (periodo + CPU del EmuThread), relee la palanca y vuelca cada
+	// N cuadros. Va aca y no en BeginFrame porque BeginFrame YA es una de las
+	// esperas que hay que medir.
+	stvmed::Cuadro();
+
 	double startTime = time_now_d();
 
 	ProcessWheelRelease(NKCODE_EXT_MOUSEWHEEL_UP, startTime, false);
@@ -1108,7 +1115,10 @@ void NativeFrame(GraphicsContext *graphicsContext) {
 
 	// This, between EndFrame and Present, is where we should actually wait to do present time management.
 	// There might not be a meaningful distinction here for all backends..
-	g_frameTiming.PostSubmit();
+	{
+		stvmed::Cronometro c(stvmed::R_POSTSUBMIT);  // STV: throttle DELIBERADO (no es serializacion)
+		g_frameTiming.PostSubmit();
+	}
 
 	if (renderCounter < 10 && ++renderCounter == 10) {
 		// We're rendering fine, clear out failure info.

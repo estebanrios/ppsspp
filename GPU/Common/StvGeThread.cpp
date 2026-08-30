@@ -224,11 +224,18 @@ static void AfinidadCluster(bool soloGrandes) {
 static void WorkerMain() {
 	SetCurrentThreadName("STVGeWorker");
 	tl_enWorker = true;
+	stvmed::MarcarRol(stvmed::ROL_WORKER);  // STV_MEDIDOR_ESPERAS_v1
 	AfinidadCluster(true);
 
 	std::unique_lock<std::mutex> lk(g_muCola);
 	while (true) {
-		g_cvOrden.wait(lk, [] { return g_ordenPendiente || g_apagando; });
+		{
+			// STV: worker OCIOSO. Espera LEGITIMA (no hay lista que correr).
+			// Es el complemento de w_pasada: si w_orden es grande, el worker no
+			// es el cuello; si es chico, el EmuThread lo esta persiguiendo.
+			stvmed::Cronometro c(stvmed::R_W_ORDEN);
+			g_cvOrden.wait(lk, [] { return g_ordenPendiente || g_apagando; });
+		}
 		if (g_apagando)
 			break;
 
@@ -242,7 +249,14 @@ static void WorkerMain() {
 		{
 			// El candado grueso, de punta a punta de la pasada: mientras el
 			// worker ejecuta, el EmuThread no entra a territorio GPU.
-			std::lock_guard<std::recursive_mutex> ge(g_mu);
+			// STV_MEDIDOR_ESPERAS_v1: se parte en dos — lo que cuesta CONSEGUIR
+			// el candado (espera al EmuThread) y lo que dura la pasada (trabajo).
+			std::unique_lock<std::recursive_mutex> ge(g_mu, std::defer_lock);
+			{
+				stvmed::Cronometro c(stvmed::R_W_CANDADO);
+				ge.lock();
+			}
+			stvmed::Cronometro cPasada(stvmed::R_W_PASADA);
 			DLResult r = gpu->ProcessDLQueue();
 			// DebugBreak es imposible aca: el dispatch degrada a inline
 			// cuando hay debugger/recorder activo (StvGeExigeInline).
@@ -314,6 +328,9 @@ void Drenar() {
 	if (lote.empty())
 		return;
 	g_drenajes.fetch_add(1, std::memory_order_relaxed);
+	// STV: el drenaje es TRABAJO del EmuThread, no espera. Se cronometra para
+	// poder descontarlo del residuo y que resto= signifique lo que dice.
+	stvmed::Cronometro cDren(stvmed::R_DRENAJE);
 
 	// FIFO estricto: el orden relativo entre interrupts y syncs es el mismo en
 	// el que el camino inline los habria emitido. Se ejecutan FUERA de
@@ -330,13 +347,16 @@ void Drenar() {
 // --- Esperas y barreras ------------------------------------------------------
 
 // contarEspera: true cuando la espera viene de ListSync/DrawSync (testigo).
-static void EsperarIdleInterno(bool contarEspera) {
+static void EsperarIdleInterno(bool contarEspera, stvmed::Ranura ranura = stvmed::R_ESPERA_IDLE) {
 	if (!g_workerCreado.load(std::memory_order_relaxed))
 		return;
 	std::unique_lock<std::mutex> lk(g_muCola);
 	if (g_corriendo || g_ordenPendiente) {
 		if (contarEspera)
 			g_esperasSync.fetch_add(1, std::memory_order_relaxed);
+		// STV_MEDIDOR_ESPERAS_v1: el hilo que llama se para hasta que el worker
+		// termina la pasada Y no quedan ordenes. La ranura la pone el caller.
+		stvmed::Cronometro c(ranura);
 		g_cvIdle.wait(lk, [] { return !g_corriendo && !g_ordenPendiente; });
 	}
 }
@@ -345,8 +365,8 @@ void EsperarIdle() {
 	EsperarIdleInterno(false);
 }
 
-void Barrera() {
-	EsperarIdleInterno(false);
+void Barrera(stvmed::Ranura ranura) {
+	EsperarIdleInterno(false, ranura);
 	Drenar();
 }
 
@@ -359,7 +379,7 @@ void EsperarGeParaSync() {
 	// deja al worker idle sin completarse, y ahi la logica original de
 	// upstream (waitUntilTicks == -1 => duerme al hilo EMULADO) es exactamente
 	// lo que corresponde, igual que inline.
-	EsperarIdleInterno(true);
+	EsperarIdleInterno(true, stvmed::R_GE_SYNC);
 	Drenar();
 }
 

@@ -1759,7 +1759,7 @@ ScreenRenderFlags EmuScreen::RunEmulation(bool skipBufferEffects) {
 			// STV_GE_THREAD_v1: candado sobre la cadena BeginHostFrame entera
 			// (la subclase agrega trabajo despues de la base), por si el
 			// worker sigue masticando la cola del cuadro anterior.
-			stvge::CandadoGe candadoGe;
+			stvge::CandadoGe candadoGe(stvmed::R_CAND_BEGINHOST);  // STV_MEDIDOR_ESPERAS_v1
 			gpu->BeginHostFrame(displayLayoutConfig);
 		}
 
@@ -1832,8 +1832,8 @@ ScreenRenderFlags EmuScreen::RunEmulation(bool skipBufferEffects) {
 			// mismo hilo dentro del run loop, despues de esta linea no puede
 			// aparecer trabajo nuevo hasta el proximo cuadro. Precedente de
 			// Barrera en este contexto: SaveState::Process (SaveState.cpp).
-			stvge::Barrera();
-			stvge::CandadoGe candadoGe;
+			stvge::Barrera(stvmed::R_BARRERA_CUADRO);  // STV_MEDIDOR_ESPERAS_v1: LA espera de frontera
+			stvge::CandadoGe candadoGe(stvmed::R_CAND_ENDHOST);
 			// Run post processing and other passes.
 			gpu->PrepareCopyDisplayToOutput(displayLayoutConfig);
 			gpu->EndHostFrame();

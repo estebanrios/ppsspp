@@ -46,6 +46,7 @@
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/ErrorCodes.h"
 #include "Core/HLE/FunctionWrappers.h"
+#include "Common/StvMedidor.h"
 #include "Core/HLE/sceSas.h"
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceKernelThread.h"
@@ -103,6 +104,12 @@ int __SasThread() {
 }
 
 static void __SasDrain() {
+	// STV_MEDIDOR: el EmuThread se para aca esperando al hilo SAS. Es la fuente
+	// con la cota mas alta de todas (~3 por cuadro emulado, derivado del ritmo
+	// de despertares del hilo SAS: 172,3/s = 44100/256, o sea grain 256), y era
+	// la unica que el instrumento no cubria: sin esta ranura todo el audio caia
+	// en el campo `resto=` y no se podia saber si era el.
+	stvmed::Cronometro cron(stvmed::R_SAS_DRAIN);
 	std::unique_lock<std::mutex> guard(sasDoneMutex);
 	while (sasThreadState == SasThreadState::QUEUED)
 		sasDone.wait(guard);

@@ -808,7 +808,7 @@ void GPUCommonHW::InvalidateCache(u32 addr, int size, GPUInvalidationType type) 
 }
 
 bool GPUCommonHW::FramebufferDirty() {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1: el flip consulta y LIMPIA la bandera del vfb
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_FBDIRTY);  // STV_GE_THREAD_v1: el flip consulta y LIMPIA la bandera del vfb
 	if (!framebufferManager_)
 		return true;
 	VirtualFramebuffer *vfb = framebufferManager_->GetDisplayVFB();
@@ -821,7 +821,7 @@ bool GPUCommonHW::FramebufferDirty() {
 }
 
 bool GPUCommonHW::FramebufferReallyDirty() {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_FBDIRTY);  // STV_GE_THREAD_v1
 	if (!framebufferManager_)
 		return true;
 	VirtualFramebuffer *vfb = framebufferManager_->GetDisplayVFB();

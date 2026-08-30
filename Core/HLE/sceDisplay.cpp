@@ -768,7 +768,7 @@ void __DisplayFlip(int cyclesLate) {
 	// STV_GE_THREAD_v1: skipDrawReason lo lee el worker en cada draw/flush;
 	// el flip lo muta aca — bajo candado para que el cambio de veredicto de
 	// frameskip no parta una pasada al medio.
-	stvge::CandadoGe candadoGe;
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_FLIP);  // STV_MEDIDOR_ESPERAS_v1
 	if (skipFrame) {
 		// Tell the emulated GPU to skip the next frame.
 		gstate_c.skipDrawReason |= SKIPDRAW_SKIPFRAME;

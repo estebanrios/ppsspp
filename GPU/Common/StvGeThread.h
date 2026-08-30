@@ -47,6 +47,8 @@
 #include <cstdint>
 #include <mutex>
 
+#include "Common/StvMedidor.h"  // STV_MEDIDOR_ESPERAS_v1
+
 namespace stvge {
 
 // Cadena que prueba que el parche entro en el .so:
@@ -87,9 +89,15 @@ inline std::recursive_mutex g_mu;
 // contra la pasada del worker.
 class CandadoGe {
 public:
-	CandadoGe() : tomado_(NivelActivo() != 0) {
-		if (tomado_)
+	// STV_MEDIDOR_ESPERAS_v1: la ranura dice QUE sitio del cuadro esta
+	// esperando el candado. Default R_CAND_OTRO para no tocar los ~30 sitios
+	// que no interesan; los del camino del cuadro pasan la suya. Con el
+	// medidor apagado esto es un load relaxed y una rama predecible mas.
+	explicit CandadoGe(stvmed::Ranura ranura = stvmed::R_CAND_OTRO) : tomado_(NivelActivo() != 0) {
+		if (tomado_) {
+			stvmed::Cronometro c(ranura);
 			g_mu.lock();
+		}
 	}
 	~CandadoGe() {
 		if (tomado_)
@@ -131,7 +139,7 @@ void EsperarIdle();
 // EsperarIdle + Drenar. La frontera segura completa: despues de esto no hay
 // pasada en vuelo ni terminacion sin materializar. Solo desde el EmuThread
 // (el drenaje toca CoreTiming).
-void Barrera();
+void Barrera(stvmed::Ranura ranura = stvmed::R_BARRERA_OTRA);
 
 // El paso previo de ListSync/DrawSync mode=0 en modo worker: si la lista
 // consultada puede seguir en el worker, esperar la pasada y drenar para que la

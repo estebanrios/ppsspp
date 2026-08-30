@@ -377,7 +377,7 @@ void GPUCommon::ResetMatrices() {
 u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<PspGeListArgs> args, bool head, bool *runList) {
 	// STV_GE_THREAD_v1: puro estado (dls[], dlQueue, currentList) — candado y
 	// nada mas; la ejecucion la despacha el caller DESPUES de soltar esto.
-	stvge::CandadoGe candadoGe;
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_ENCOLA);  // STV_MEDIDOR_ESPERAS_v1
 	*runList = false;
 
 	// TODO Check the stack values in missing arg and ajust the stack depth
@@ -520,7 +520,7 @@ u32 GPUCommon::DequeueList(int listid) {
 }
 
 u32 GPUCommon::UpdateStall(int listid, u32 newstall, bool *runList) {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1: dl.stall es el downcount vivo de la pasada
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_STALL);  // STV_GE_THREAD_v1: dl.stall es el downcount vivo de la pasada
 	*runList = false;
 	if (listid < 0 || listid >= DisplayListMaxCount || dls[listid].state == PSP_GE_DL_STATE_NONE)
 		return SCE_KERNEL_ERROR_INVALID_ID;
