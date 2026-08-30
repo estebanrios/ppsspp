@@ -217,6 +217,19 @@ void StereoResampler::Mix(s16 *samples, unsigned int numSamples, bool consider_f
 			// int missing = numSamples * 2 - currentSample;
 			// ILOG("Resampler underrun: %d (numSamples: %d, currentSample: %d)", missing, numSamples, currentSample / 2);
 			underrunCount_++;
+			// STV F10b (2026-08-29): mismo rastro que el granular, para poder
+			// comparar los DOS mixers con la misma metrica. Sin esto, el modo
+			// clasico no deja ninguna huella y un A/B contra el granular seria
+			// comparar un numero contra un silencio. Limite de tasa 500 ms:
+			// corre en el hilo del callback de audio.
+			{
+				const double ahora = time_now_d();
+				if (ahora - lastUnderrunLog_ >= 0.5) {
+					WARN_LOG(Log::Audio, "STVAUDIO: underrun #%d (clasico, faltaron %d de %d muestras)",
+						underrunCount_, (int)(numSamples * 2 - currentSample), (int)(numSamples * 2));
+					lastUnderrunLog_ = ahora;
+				}
+			}
 			break;
 		}
 		u32 indexR2 = indexR + 2; //next sample

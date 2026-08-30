@@ -65,6 +65,7 @@ private:
 	u32 ratio_ = 0;
 
 	int underrunCount_ = 0;
+	double lastUnderrunLog_ = 0.0;   // STV F10b: limite de tasa del log
 	int overrunCount_ = 0;
 	int underrunCountTotal_ = 0;
 	int overrunCountTotal_ = 0;
