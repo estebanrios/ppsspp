@@ -1444,6 +1444,20 @@ bool Config::ShouldSaveSetting(const void *ptr) const {
 // * Save the game-specific settings to the game-specific ini file.
 // * Then, save the NON-game-specific settings ONLY to the regular ini file!
 bool Config::Save(const char *saveReason) {
+	// STV: candado. Config::Save escribe a un .tmp de nombre FIJO y despues lo
+	// renombra; dos hilos a la vez abren el MISMO inodo, se pisan desde offset
+	// 0, y el segundo termina escribiendo dentro del ini ya publicado por el
+	// primero. Queda un ini con dos volcados entrelazados -- justo la perdida
+	// de configuracion que el guardado en pause vino a evitar.
+	//
+	// Se volvio alcanzable HOY: ahora hay tres hilos que llaman aca --
+	// NativeApp.pause (hilo de Java, en cada HOME), el renameCallback del
+	// savestate (hilo del emulador) y GameSettingsScreen::onFinish (hilo de
+	// render) -- y el primero se dispara en la via NORMAL de salir del juego en
+	// esta consola.
+	static std::mutex guardadoMutex;
+	std::lock_guard<std::mutex> bloqueo(guardadoMutex);
+
 	double startTime = time_now_d();
 	if (!IsFirstInstance()) {
 		// TODO: Should we allow saving config if started from a different directory?
@@ -1852,13 +1866,34 @@ bool Config::SaveGameConfig(const std::string &gameId, std::string_view titleFor
 	PreSaveCleanup();
 
 	// Do all the actual saving.
+	//
+	// STV: solo se escriben las claves QUE YA ESTABAN en este ini por juego.
+	//
+	// Antes se volcaban las 271 claves PER_GAME de una, con el valor que
+	// hubiera en RAM. Efecto medido: el ini de fabrica de God of War trae UNA
+	// clave (263 bytes) y el del aparato tiene 605 (14,7 kB) -- un snapshot
+	// congelado. Desde ese momento el ini GLOBAL queda muerto para ese titulo,
+	// en silencio y para siempre, porque el por-juego pisa todo.
+	//
+	// Es la causa raiz de tres problemas que se venian parcheando por separado:
+	// STVEscala puesto en el global y pisado por el por-juego, BloomHack en 3
+	// contra 0, y el AutoLoadSaveState en 0 que hizo que el banco midiera la
+	// pantalla de titulo durante una sesion entera.
+	//
+	// Y se agravo al agregar el guardado en NativeApp.pause: cada HOME
+	// re-congelaba el snapshot.
 	for (const ConfigSectionMeta &meta : g_sectionMeta) {
-		Section *section = iniFile.GetOrCreateSection(meta.section);
+		Section *section = iniFile.GetSection(meta.section);
+		if (!section)
+			continue;   // seccion que este ini no tiene: no se inventa
 		ConfigBlock *configBlock = meta.configBlock;
 		for (size_t j = 0; j < meta.settingsCount; j++) {
-			if (meta.settings[j].PerGame()) {
-				meta.settings[j].WriteToIniSection(configBlock, section);
-			}
+			if (!meta.settings[j].PerGame())
+				continue;
+			std::string yaEstaba;
+			if (!section->Get(meta.settings[j].IniKey(), &yaEstaba))
+				continue;   // no estaba: la decide el ini global
+			meta.settings[j].WriteToIniSection(configBlock, section);
 		}
 	}
 

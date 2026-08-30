@@ -180,7 +180,27 @@ static bool StvReplayReproducirDesplazado(const Path &ruta) {
 		t = base + (t - minimo);
 		memcpy(&items[i * ITEM + 1], &t, sizeof(t));
 	}
-	ERROR_LOG(Log::sceCtrl, "STVREPLAY: %zu eventos desplazados de t=%llu a t=%llu",
+	// Item ANALOG sintetico en el instante justo anterior al primero real, con
+	// los dos sticks CENTRADOS.
+	//
+	// Sin esto, el desplazamiento introduce un bug: durante el medio segundo de
+	// margen el lazo de ReplayExecuteCtrl no avanza (ningun timestamp vencio),
+	// pero igual hace `memcpy(analog, lastAnalog, ...)` incondicionalmente
+	// (Core/Replay.cpp:377). Y ReplayAbort() -- que corre justo antes -- deja
+	// lastAnalog en CERO (Replay.cpp:327), mientras el centro del stick del PSP
+	// es 128 (CTRL_ANALOG_CENTER). Resultado: ~30 cuadros con los dos sticks a
+	// fondo en diagonal arriba-izquierda, al principio de CADA reproduccion.
+	// Arruina justo lo que el desplazamiento venia a dar: un arranque limpio y
+	// repetible.
+	{
+		uint8_t centrado[ITEM] = {0};
+		centrado[0] = 1;                       // ReplayAction::ANALOG
+		const uint64_t t0 = base > 0 ? base - 1 : 0;
+		memcpy(&centrado[1], &t0, sizeof(t0));
+		centrado[9] = centrado[10] = centrado[11] = centrado[12] = 128;
+		items.insert(items.begin(), centrado, centrado + ITEM);
+	}
+	ERROR_LOG(Log::sceCtrl, "STVREPLAY: %zu eventos desplazados de t=%llu a t=%llu (+1 centrado)",
 		n, (unsigned long long)minimo, (unsigned long long)base);
 	return ReplayExecuteBlob(1, items);
 }
