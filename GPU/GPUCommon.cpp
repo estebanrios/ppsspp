@@ -154,7 +154,7 @@ void GPUCommon::PopDLQueue() {
 
 bool GPUCommon::BusyDrawing() {
 	// STV_GE_THREAD_v1: candado (recursivo: DrawSync abajo vuelve a tomarlo).
-	stvge::CandadoGe candadoGe;
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_LISTA);
 	u32 state = DrawSync(1);
 	if (state == PSP_GE_LIST_DRAWING || state == PSP_GE_LIST_STALLING) {
 		if (currentList && currentList->state != PSP_GE_DL_STATE_PAUSED) {
@@ -497,7 +497,7 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 }
 
 u32 GPUCommon::DequeueList(int listid) {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_LISTA);  // STV_GE_THREAD_v1
 	if (listid < 0 || listid >= DisplayListMaxCount || dls[listid].state == PSP_GE_DL_STATE_NONE)
 		return SCE_KERNEL_ERROR_INVALID_ID;
 
@@ -535,7 +535,7 @@ u32 GPUCommon::UpdateStall(int listid, u32 newstall, bool *runList) {
 }
 
 u32 GPUCommon::Continue(bool *runList) {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_LISTA);  // STV_GE_THREAD_v1
 	*runList = false;
 	if (!currentList)
 		return 0;
@@ -577,7 +577,7 @@ u32 GPUCommon::Continue(bool *runList) {
 }
 
 u32 GPUCommon::Break(int mode) {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_LISTA);  // STV_GE_THREAD_v1
 	if (mode < 0 || mode > 1)
 		return SCE_KERNEL_ERROR_INVALID_MODE;
 
@@ -644,7 +644,7 @@ u32 GPUCommon::Break(int mode) {
 void GPUCommon::PSPFrame() {
 	// STV_GE_THREAD_v1: lo llama el flip (hleAfterFlip) mientras el worker
 	// puede estar en pasada; immCount_/recorder son territorio GPU.
-	stvge::CandadoGe candadoGe;
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_LISTA);
 	immCount_ = 0;
 	if (dumpNextFrame_) {
 		NOTICE_LOG(Log::G3D, "DUMPING THIS FRAME");
@@ -1583,14 +1583,14 @@ void GPUCommon::DoState(PointerWrap &p) {
 }
 
 void GPUCommon::InterruptStart(int listid) {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_INTERRUPT);  // STV_GE_THREAD_v1
 	interruptRunning = true;
 }
 
 void GPUCommon::InterruptEnd(int listid) {
 	// STV_GE_THREAD_v1: toca dls[], la cola y puede restaurar contexto
 	// (gstate.Restore + ReapplyGfxState) mientras el worker corre otra lista.
-	stvge::CandadoGe candadoGe;
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_INTERRUPT);
 	interruptRunning = false;
 	isbreak = false;
 
@@ -1617,7 +1617,7 @@ void GPUCommon::InterruptEnd(int listid) {
 
 // TODO: Maybe cleaner to keep this in GE and trigger the clear directly?
 void GPUCommon::SyncEnd(GPUSyncType waitType, int listid, bool wokeThreads) {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1: barre estados de dls[] desde el evento sync
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_INTERRUPT);  // STV_GE_THREAD_v1: barre estados de dls[] desde el evento sync
 	if (waitType == GPU_SYNC_DRAW && wokeThreads)
 	{
 		for (int i = 0; i < DisplayListMaxCount; ++i) {
@@ -1979,7 +1979,7 @@ bool GPUCommon::PerformMemoryCopy(u32 dest, u32 src, int size, GPUCopyFlag flags
 	// EmuThread; el plano no las listo pero son entradas a territorio GPU
 	// igual que las syscalls sceGe — mismo candado (idem los tres Perform de
 	// abajo; Readback/WriteColor delegan en este).
-	stvge::CandadoGe candadoGe;
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_MEMOP);
 	if (size == 0) {
 		_dbg_assert_msg_(false, "Zero-sized PerformMemoryCopy: %08x -> %08x, size %d (flag: %d)", src, dest, size, (int)flags);
 		return false;
@@ -2025,7 +2025,7 @@ bool GPUCommon::PerformMemoryCopy(u32 dest, u32 src, int size, GPUCopyFlag flags
 }
 
 bool GPUCommon::PerformMemorySet(u32 dest, u8 v, int size) {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_MEMOP);  // STV_GE_THREAD_v1
 	if (size == 0) {
 		_dbg_assert_msg_(false, "Zero-sized PerformMemorySet: %08x, value %02x, size %d", dest, v, size);
 		return false;
@@ -2075,7 +2075,7 @@ bool GPUCommon::PerformWriteColorFromMemory(u32 dest, int size) {
 }
 
 void GPUCommon::PerformWriteFormattedFromMemory(u32 addr, int size, int frameWidth, GEBufferFormat format) {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_MEMOP);  // STV_GE_THREAD_v1
 	if (Memory::IsVRAMAddress(addr)) {
 		framebufferManager_->PerformWriteFormattedFromMemory(addr, size, frameWidth, format);
 	}
@@ -2084,7 +2084,7 @@ void GPUCommon::PerformWriteFormattedFromMemory(u32 addr, int size, int frameWid
 }
 
 bool GPUCommon::PerformWriteStencilFromMemory(u32 dest, int size, WriteStencil flags) {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_MEMOP);  // STV_GE_THREAD_v1
 	if (framebufferManager_->MayIntersectFramebufferColor(dest)) {
 		framebufferManager_->PerformWriteStencilFromMemory(dest, size, flags);
 		return true;

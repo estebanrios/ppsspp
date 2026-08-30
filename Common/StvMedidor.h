@@ -119,6 +119,15 @@ enum Ranura : int {
 	R_RD_READBACK,      // vkWaitForFences del readbackFence (la parada dura de verdad)
 	// --- EmuThread: audio ---
 	R_SAS_DRAIN,        // __SasDrain: el EmuThread esperando al hilo SAS
+	// --- desglose de cand_otro: los sitios que se chocan el candado del worker.
+	// Se etiquetan porque cand_otro es el UNICO campo que se mueve de verdad
+	// entre un cuadro bueno (0,039 ms) y uno malo (0,588 ms), 15 veces por
+	// cuadro. Sin este desglose no se sabe cual de los ~20 sitios es.
+	R_CAND_INTERRUPT,   // InterruptStart/InterruptEnd/SyncEnd (interrupciones de la GE)
+	R_CAND_INVALIDATE,  // InvalidateCache  <- sceKernelDcacheWritebackAll
+	R_CAND_MEMOP,       // PerformMemoryCopy/Set/WriteFormatted/WriteStencil
+	R_CAND_DISPLAY,     // SetDisplayFramebuffer/Prepare-/CopyDisplayToOutput
+	R_CAND_LISTA,       // DequeueList/Continue/Break/BusyDrawing/PSPFrame
 	R_NUM
 };
 
@@ -131,6 +140,7 @@ inline const char *const kNombre[] = {
 	"w_orden", "w_candado", "w_pasada",
 	"rd_cola", "rd_acquire", "rd_present", "rd_readback",
 	"sas_drain",
+	"cand_interrupt", "cand_invalidate", "cand_memop", "cand_display", "cand_lista",
 };
 // Si alguien agrega una ranura y se olvida el nombre, que rompa la compilacion
 // y no que el volcado imprima el nombre de la ranura de al lado.

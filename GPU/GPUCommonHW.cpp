@@ -514,7 +514,7 @@ void GPUCommonHW::BeginHostFrame(const DisplayLayoutConfig &config) {
 
 void GPUCommonHW::SetDisplayFramebuffer(u32 framebuf, u32 stride, GEBufferFormat format) {
 	// STV_GE_THREAD_v1: entrada del vblank (sceDisplay) a territorio GPU.
-	stvge::CandadoGe candadoGe;
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_DISPLAY);
 	framebufferManager_->SetDisplayFramebuffer(framebuf, stride, format);
 	NotifyDisplay(framebuf, stride, format);
 }
@@ -536,7 +536,7 @@ void GPUCommonHW::PreExecuteOp(u32 op, u32 diff) {
 void GPUCommonHW::PrepareCopyDisplayToOutput(const DisplayLayoutConfig &config) {
 	// STV_GE_THREAD_v1: el present emite draws; un solo emisor a la vez
 	// (invariante 6) — serializado contra la pasada del worker.
-	stvge::CandadoGe candadoGe;
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_DISPLAY);
 	drawEngineCommon_->FlushQueuedDepth();
 	// Flush anything left over.
 	drawEngineCommon_->Flush();
@@ -548,7 +548,7 @@ void GPUCommonHW::PrepareCopyDisplayToOutput(const DisplayLayoutConfig &config) 
 }
 
 void GPUCommonHW::CopyDisplayToOutput(const DisplayLayoutConfig &config) {
-	stvge::CandadoGe candadoGe;  // STV_GE_THREAD_v1
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_DISPLAY);  // STV_GE_THREAD_v1
 	framebufferManager_->CopyDisplayToOutput(config);
 	curFramebufferDirty_ = false;
 }
@@ -792,7 +792,7 @@ void GPUCommonHW::CheckDepthUsage(VirtualFramebuffer *vfb) {
 void GPUCommonHW::InvalidateCache(u32 addr, int size, GPUInvalidationType type) {
 	// STV_GE_THREAD_v1: sceKernelDcache*/sceIo invalidan la cache de texturas
 	// desde el EmuThread; el worker la recorre en cada SetTexture.
-	stvge::CandadoGe candadoGe;
+	stvge::CandadoGe candadoGe(stvmed::R_CAND_INVALIDATE);
 	if (size > 0)
 		textureCache_->Invalidate(addr, size, type);
 	else
