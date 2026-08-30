@@ -25,6 +25,11 @@
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/ErrorCodes.h"
 #include "Core/HLE/FunctionWrappers.h"
+#include "Common/File/Path.h"
+#include <string>
+#include <cstring>
+#include <sys/system_properties.h>
+#include "Common/TimeUtil.h"
 #include "Core/HLE/sceCtrl.h"
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceKernelThread.h"
@@ -110,6 +115,49 @@ static u32 emuRapidFireInterval = 5;
 // These buttons are not affected by rapid fire (neither is analog.)
 const u32 CTRL_EMU_RAPIDFIRE_MASK = CTRL_UP | CTRL_DOWN | CTRL_LEFT | CTRL_RIGHT;
 
+// STV F10b: disparador del sistema de Replay por propiedad de Android.
+// Sondea como mucho una vez por segundo (el latch corre 60+ veces por segundo).
+static void StvReplayPoll() {
+	static double ultimo = 0.0;
+	const double ahora = time_now_d();
+	if (ahora - ultimo < 1.0)
+		return;
+	ultimo = ahora;
+
+	char v[PROP_VALUE_MAX] = {0};
+	if (__system_property_get("debug.stv.replay", v) <= 0 || v[0] == 0)
+		return;
+
+	static std::string previo;
+	if (previo == v)
+		return;   // ya se atendio esta orden
+	previo = v;
+
+	const Path ruta("/data/local/tmp/stv_replay.bin");
+	if (!strcmp(v, "grabar")) {
+		ReplayAbort();
+		ReplayBeginSave();
+		INFO_LOG(Log::sceCtrl, "STVREPLAY: GRABANDO (soltar con: setprop debug.stv.replay guardar)");
+	} else if (!strcmp(v, "guardar")) {
+		if (ReplayIsSaving() && ReplayFlushFile(ruta)) {
+			INFO_LOG(Log::sceCtrl, "STVREPLAY: guardado en %s", ruta.c_str());
+		} else {
+			WARN_LOG(Log::sceCtrl, "STVREPLAY: no habia grabacion activa, nada que guardar");
+		}
+		ReplayAbort();
+	} else if (!strcmp(v, "reproducir")) {
+		ReplayAbort();
+		if (ReplayExecuteFile(ruta)) {
+			INFO_LOG(Log::sceCtrl, "STVREPLAY: REPRODUCIENDO %s", ruta.c_str());
+		} else {
+			WARN_LOG(Log::sceCtrl, "STVREPLAY: NO se pudo cargar %s", ruta.c_str());
+		}
+	} else if (!strcmp(v, "parar")) {
+		ReplayAbort();
+		INFO_LOG(Log::sceCtrl, "STVREPLAY: detenido");
+	}
+}
+
 static void __CtrlUpdateLatch()
 {
 	std::lock_guard<std::mutex> guard(ctrlMutex);
@@ -119,6 +167,26 @@ static void __CtrlUpdateLatch()
 	if (emuRapidFire && emuRapidFireToggle)
 		buttons &= CTRL_EMU_RAPIDFIRE_MASK;
 
+	// STV F10b (2026-08-30): GANCHO DE GRABACION/REPRODUCCION DE ENTRADA.
+	// POR QUE: el banco de pruebas medía una carga que NO era la del problema
+	// (mandaba el stick hacia adelante: eso corre, no pelea) y encima ni
+	// siquiera cargaba la partida. Para medir hace falta una carga que sea a la
+	// vez REPRODUCIBLE y REPRESENTATIVA: la unica forma es grabar al usuario
+	// jugando de verdad y reproducir ESO.
+	// El sistema de Replay de PPSSPP ya hace exactamente eso y engancha aca
+	// mismo, en el punto donde el juego lee el mando, asi que la reproduccion
+	// es determinista CUADRO A CUADRO. Lo unico que faltaba era un disparador:
+	// upstream solo lo expone por el WebSocket del depurador.
+	// NO se usa sendevent/uinput a proposito: leccion del proyecto
+	// (herramientas-iteracion-caliente) — sendevent NO llega a un dispositivo
+	// tomado con EVIOCGRAB, y un informe de agente llego a "validar" clicks que
+	// nunca ocurrieron.
+	// Uso:  setprop debug.stv.replay grabar      (empieza a grabar)
+	//       setprop debug.stv.replay guardar     (vuelca a /data/local/tmp/stv_replay.bin)
+	//       setprop debug.stv.replay reproducir  (carga ese archivo y lo ejecuta)
+	//       setprop debug.stv.replay ""          (nada)
+	// Se relee 1 vez por segundo: cero costo en el camino caliente.
+	StvReplayPoll();
 	ReplayApplyCtrl(buttons, ctrlCurrent.analog, t);
 
 	// Copy in the current data to the current buffer.
