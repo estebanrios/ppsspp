@@ -133,7 +133,11 @@ static void StvReplayPoll() {
 		return;   // ya se atendio esta orden
 	previo = v;
 
-	const Path ruta("/data/local/tmp/stv_replay.bin");
+	// La ruta TIENE que ser escribible por la app (uid del paquete), no por
+	// shell: /data/local/tmp es shell:shell 771 y PPSSPP corre como u0_aNN, o
+	// sea que ahi NO puede crear archivos (error cometido y medido: el guardado
+	// fallaba en silencio). El directorio de datos del propio juego si lo es.
+	const Path ruta("/sdcard/Android/data/org.ppsspp.ppsspp/files/stv_replay.bin");
 	if (!strcmp(v, "grabar")) {
 		ReplayAbort();
 		ReplayBeginSave();
@@ -141,10 +145,13 @@ static void StvReplayPoll() {
 	} else if (!strcmp(v, "guardar")) {
 		if (ReplayIsSaving() && ReplayFlushFile(ruta)) {
 			INFO_LOG(Log::sceCtrl, "STVREPLAY: guardado en %s", ruta.c_str());
+			ReplayAbort();
 		} else {
-			WARN_LOG(Log::sceCtrl, "STVREPLAY: no habia grabacion activa, nada que guardar");
+			// NO se aborta: si el guardado fallo (permisos, disco), la
+			// grabacion sigue viva y se puede reintentar. Abortar aca fue
+			// exactamente lo que hizo perder una toma del usuario.
+			WARN_LOG(Log::sceCtrl, "STVREPLAY: FALLO el guardado (grabacion NO abortada, se puede reintentar)");
 		}
-		ReplayAbort();
 	} else if (!strcmp(v, "reproducir")) {
 		ReplayAbort();
 		if (ReplayExecuteFile(ruta)) {
