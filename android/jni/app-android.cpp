@@ -943,6 +943,31 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_resume(JNIEnv *, jclass) {
 extern "C" void Java_org_ppsspp_ppsspp_NativeApp_pause(JNIEnv *, jclass) {
 	INFO_LOG(Log::System, "NativeApp.pause() - begin");
 	AndroidAudio_Pause(g_audioState);
+	// STV: guardar la config AQUI, al perder el foco.
+	//
+	// Por que: la config solo se escribia al salir de la pantalla de ajustes
+	// (GameSettingsScreen::onFinish) o en un apagado limpio (NativeShutdown).
+	// En esta consola el usuario sale del juego con HOME, que lleva al
+	// launcher y deja a PPSSPP en segundo plano; con 972 MB de RAM el
+	// lowmemorykiller lo mata poco despues (medido: mata el launcher, el
+	// teclado y servicios del sistema durante una sola corrida de banco), y
+	// ese camino NO pasa por ningun guardado. Resultado: el usuario tilda una
+	// opcion, la ve tildada -- la UI refleja fielmente la variable en memoria,
+	// no hay bug de pintado -- y al volver esta apagada, sin ningun aviso.
+	//
+	// Fue exactamente lo que paso con "Hilo del GE en otro nucleo (STV)": el
+	// usuario lo recordaba tildado y el ini no tenia la clave. Ese ajuste vale
+	// +10 % de velocidad y -61 % de cortes de audio, y se estaba perdiendo en
+	// silencio.
+	//
+	// Agrava el efecto que Config::LoadGameConfig lee con
+	// applyDefaultIfMissing=false: una clave ausente NO restaura el defecto,
+	// deja el valor que hubiera en memoria. Asi que el true perdido puede
+	// sobrevivir en RAM y hacer que la UI muestre tildado algo que no esta en
+	// ningun ini.
+	if (g_Config.bSaveSettings) {
+		g_Config.Save("NativeApp.pause");
+	}
 	INFO_LOG(Log::System, "NativeApp.pause() - end");
 }
 
