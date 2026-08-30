@@ -94,6 +94,7 @@ void IRJit::ClearCache() {
 }
 
 void IRJit::InvalidateCacheAt(u32 em_address, int length) {
+	stvmed::Cronometro cronStv(stvmed::R_T_JITINVAL);
 	std::vector<int> numbers = blocks_.FindInvalidatedBlockNumbers(em_address, length);
 	if (numbers.empty()) {
 		return;

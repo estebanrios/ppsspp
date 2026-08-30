@@ -136,6 +136,11 @@ enum Ranura : int {
 	R_T_ATRAC,          // Atrac2::DecodeInternal    (decodificar audio)
 	R_T_TEXTURA,        // TextureCacheCommon::SetTextureFramebuffer
 	R_T_BLOCKXFER,      // GPUCommon::DoBlockTransfer (copias de VRAM)
+	R_T_JITINVAL,       // IRJit::InvalidateCacheAt: descartar bloques ya compilados.
+	                    // Es la sospecha para las 138 compilaciones por ventana que
+	                    // se vieron: no es codigo nuevo, es RE-compilacion. El juego
+	                    // llama sceKernelIcacheInvalidateAll, que barre el rango
+	                    // ENTERO (0..0x3FFFFFFF) de una.
 	R_NUM
 };
 
@@ -149,7 +154,7 @@ inline const char *const kNombre[] = {
 	"rd_cola", "rd_acquire", "rd_present", "rd_readback",
 	"sas_drain",
 	"cand_interrupt", "cand_invalidate", "cand_memop", "cand_display", "cand_lista",
-	"T_jit", "T_atrac", "T_textura", "T_blockxfer",
+	"T_jit", "T_atrac", "T_textura", "T_blockxfer", "T_jitinval",
 };
 // Si alguien agrega una ranura y se olvida el nombre, que rompa la compilacion
 // y no que el volcado imprima el nombre de la ranura de al lado.
