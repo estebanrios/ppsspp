@@ -466,6 +466,24 @@ VkResult VulkanContext::GetDeviceExtensionList(std::vector<VkExtensionProperties
 		extensions->resize(device_extension_count);
 		res = vkEnumerateDeviceExtensionProperties(physical_devices_[physical_device_], nullptr, &device_extension_count, extensions->data());
 	} while (res == VK_INCOMPLETE);
+
+	// STV: volcar la lista COMPLETA de extensiones del dispositivo.
+	//
+	// Existe porque encontrar una cadena dentro de libGLES_mali.so NO prueba que
+	// el driver exponga esa extension: el binario puede traer codigo muerto o
+	// soporte para otras GPU de la familia. La unica prueba es preguntarle al
+	// driver en caliente, y este era el unico punto del codigo que ya tiene la
+	// lista en la mano y no la imprimia.
+	//
+	// Lo que se busca: VK_KHR_fragment_shading_rate (sombrear a 1/2 o 1/4 de
+	// tasa POR DRAW, que es "bajar la resolucion solo de los efectos" sin tocar
+	// el framebuffer) y VK_EXT_fragment_density_map.
+	if (res == VK_SUCCESS) {
+		for (const auto &e : *extensions) {
+			INFO_LOG(Log::G3D, "STVEXT: %s (v%u)", e.extensionName, e.specVersion);
+		}
+		INFO_LOG(Log::G3D, "STVEXT: total %d extensiones de dispositivo", (int)extensions->size());
+	}
 	return res;
 }
 
