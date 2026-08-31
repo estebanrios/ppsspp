@@ -190,6 +190,7 @@ public:
 		// comentario de handleResult); permitirSplit=false lo preserva. El
 		// candado se suelta ANTES: el despacho puede esperar al worker.
 		if (candadoGe.owns_lock())
+			testigoDL.soltar();   // la guarda muere DONDE muere el candado
 			candadoGe.unlock();
 		StvGeDespacharCola(false);
 		return false;
@@ -244,6 +245,7 @@ public:
 		// it in the background in parallel with the CPU.
 		// So, when debugging is active, we'll just use hleSplitSyscallOverGe.
 		if (candadoGe.owns_lock())
+			testigoDL.soltar();   // la guarda muere DONDE muere el candado
 			candadoGe.unlock();
 		StvGeDespacharCola(true);  // STV_GE_THREAD_v1
 	}

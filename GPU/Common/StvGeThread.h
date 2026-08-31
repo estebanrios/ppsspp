@@ -185,9 +185,22 @@ public:
 			g_sitioDL.store(sitio, std::memory_order_relaxed);
 		}
 	}
-	~TestigoDL() { g_dentroDL.fetch_sub(1, std::memory_order_acq_rel); }
+	// El testigo tiene que vivir EXACTAMENTE lo que vive el candado que vigila.
+	// GeIntrHandler suelta g_mu ANTES de terminar la funcion (a proposito: el
+	// despacho final esperaria al worker y se colgaria si lo tuviera tomado).
+	// Sin esta liberacion explicita, la guarda seguia "adentro" en ese hueco y
+	// contaba como colision al worker entrando legitimamente: un falso positivo
+	// del instrumento, no una carrera del emulador. Medido: 5 colisiones en
+	// 51.835 entradas, todas con esa firma.
+	void soltar() {
+		if (!soltado_) { soltado_ = true; g_dentroDL.fetch_sub(1, std::memory_order_acq_rel); }
+	}
+	~TestigoDL() { soltar(); }
 	TestigoDL(const TestigoDL &) = delete;
 	TestigoDL &operator=(const TestigoDL &) = delete;
+
+private:
+	bool soltado_ = false;
 };
 
 // Colision a proposito, para comprobar que el testigo SABE gritar. La enciende
