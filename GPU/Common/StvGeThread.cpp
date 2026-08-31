@@ -103,7 +103,30 @@ static void Emitir(const char *linea) {
 // explicito = sin gracia (para aislar el fix real en el banco); texto no
 // numerico o ausente = default. El log dice el objetivo en VBLANKS para que
 // nadie confunda las unidades.
-inline constexpr int kGraciaSegundosDefecto = 20;
+// DEFAULT 0 DESDE 2026-08-31 (antes 20). El gate era el "cinturon" que entro
+// en el MISMO commit que la barrera (cc286c85a): la barrera arreglaba la
+// carrera real y el gate quedaba de seguro. Nunca se reviso si seguia
+// haciendo falta, y costaba caro: se cuenta en VBLANKS, asi que con el juego
+// por debajo de 60 VPS son ~29 SEGUNDOS de reloj en los que el worker no
+// existe (medido en Spiderman 3: mediana 43,7 durante la gracia contra 57,5
+// despues).
+//
+// POR QUE 0 Y NO UN VALOR CHICO: las caidas historicas ocurrian con
+// process-uptime 4-13 s. Una gracia de 3 o 5 segundos no habria evitado
+// NINGUNA — seria costo sin cobertura. O cubre la ventana entera (20 s) o no
+// cubre nada; y si la barrera funciona, no hay ventana que cubrir.
+//
+// EVIDENCIA (2026-08-31): 24 arranques EN FRIO con gracia=0 (8 por juego) en
+// GhostOfSparta, ChainsOfOlympus y Spiderman 3, cero caidas. Los dos primeros
+// son justamente los del reporte original (CoO: 7 de 7 intentos del usuario
+// terminaban en tombstone; GoS: "casi determinista"). GhostOfSparta ademas NO
+// tiene .vkshadercache sembrada en la imagen, o sea que sus pipelines nacen
+// FRIOS — que es la condicion exacta que disparaba la carrera. El detector de
+// caidas se valido inyectando un cierre real antes de creerle a los ceros.
+//
+// EL MECANISMO SE CONSERVA ENTERO. Si alguna vez reaparece algo, se restaura
+// en caliente y sin recompilar:  setprop debug.stv.ge.gracia 20
+inline constexpr int kGraciaSegundosDefecto = 0;
 inline constexpr int kVblanksPorSegundo = 60;  // vblank PSP: 59,94 ~ 60/s
 
 // Vblanks que lleva el juego ACTUAL. Lo incrementa PorVblank (EmuThread) y lo
@@ -600,8 +623,8 @@ void DespacharProcessDLQueue() {
 static void EmitirEstado(const char *encabezado, int nivel) {
 	char b[256];
 	snprintf(b, sizeof(b),
-		"STV: ge %s nivel=%d (%s) pasadas=%u triggers=%u drenajes=%u esperas=%u",
-		encabezado, nivel, kMarca,
+		"STV: ge %s nivel=%d (%s) gracia=%ds pasadas=%u triggers=%u drenajes=%u esperas=%u",
+		encabezado, nivel, kMarca, GraciaEnVblanks() / kVblanksPorSegundo,
 		g_pasadas.load(std::memory_order_relaxed),
 		g_triggers.load(std::memory_order_relaxed),
 		g_drenajes.load(std::memory_order_relaxed),
