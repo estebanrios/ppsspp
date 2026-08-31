@@ -208,7 +208,12 @@ public:
 		const int antes = g_dentroDL.fetch_add(1, std::memory_order_acq_rel);
 		g_entradasDL.fetch_add(1, std::memory_order_relaxed);
 		const int yo = (int)gettid();
-		if (antes != 0) {
+		// RECURSION NO ES COLISION. g_muDL es recursivo a proposito: las
+		// funciones de esta zona se llaman entre si (handleResult -> InterruptEnd
+		// es el caso tipico). Contar la entrada anidada del MISMO hilo daba
+		// 55.668 "colisiones" que no eran carreras: eran el mismo hilo entrando
+		// dos veces. Solo cuenta si el que ya estaba adentro es OTRO hilo.
+		if (antes != 0 && g_dueñoDL.load(std::memory_order_relaxed) != yo) {
 			g_colisionesDL.fetch_add(1, std::memory_order_relaxed);
 			g_choqueTid.store(yo, std::memory_order_relaxed);
 			g_choqueSitio.store(sitio, std::memory_order_relaxed);

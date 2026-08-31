@@ -190,10 +190,10 @@ u32 GPUCommon::DrawSync(int mode) {
 	// el estado final — nunca peor que lo que hoy tarda el inline. mode=1 es
 	// polling: NO se espera (contestar DRAWING mientras el worker corre es la
 	// semantica correcta), solo candado.
-	stvge::CandadoDL zonaDL("DrawSync");   // contabilidad de listas
 	if (mode == 0)
 		stvge::EsperarGeParaSync();
 	stvge::CandadoGe candadoGe;
+	stvge::CandadoDL zonaDL("DrawSync");   // contabilidad de listas
 	gpuStats.numDrawSyncs++;
 
 	if (mode < 0 || mode > 1)
@@ -249,10 +249,10 @@ int GPUCommon::ListSync(int listid, int mode) {
 	// (no "lista completada": una lista stalleada deja al worker idle sin
 	// completarse y ahi el camino original de waitUntilTicks duerme al hilo
 	// emulado, igual que inline) + drenaje, todo antes del candado.
-	stvge::CandadoDL zonaDL("ListSync");   // contabilidad de listas
 	if (mode == 0)
 		stvge::EsperarGeParaSync();
 	stvge::CandadoGe candadoGe;
+	stvge::CandadoDL zonaDL("ListSync");   // contabilidad de listas
 	gpuStats.numListSyncs++;
 
 	if (listid < 0 || listid >= DisplayListMaxCount)
