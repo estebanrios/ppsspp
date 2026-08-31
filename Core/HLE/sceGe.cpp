@@ -55,7 +55,11 @@ static const int LIST_ID_MAGIC = 0x35000000;
 // worker en vuelo — el split ejecuta ProcessDLQueue en el EmuThread via
 // CORE_RUNNING_GE y no puede convivir con el worker.
 static void StvGeDespacharCola(bool permitirSplit) {
-	stvge::CandadoDL zonaDL("StvGeDespacharCola");   // contabilidad de listas
+	// SIN guarda fina A PROPOSITO: esta funcion no toca el estado protegido
+	// (solo despacha), y sostener el fino aca seria mortal — Barrera() ESPERA a
+	// que el worker termine, y el worker necesita el fino para terminar.
+	// El inventario me la marco por error de atribucion; verificado con awk
+	// sobre el cuerpo real: 0 accesos a ge_pending_cb.
 	if (permitirSplit && gpu->ShouldSplitOverGe()) {
 		stvge::Barrera();
 		hleSplitSyscallOverGe();
