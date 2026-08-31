@@ -1065,9 +1065,25 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 		// dice que esta arreglado, y aca se infesta INCONDICIONALMENTE aunque
 		// majorVersion ya esta calculado dos lineas arriba. Se loguea para
 		// saber que valor tiene de verdad antes de condicionar nada.
-		INFO_LOG(Log::G3D, "STVBUG: driverVersion=%08x major=%d hashVersion=%d -> NO_DEPTH_CANNOT_DISCARD_STENCIL_MALI infestado",
-			deviceProps.driverVersion, majorVersion, (int)isOldVersion);
-		bugs_.Infest(Bugs::NO_DEPTH_CANNOT_DISCARD_STENCIL_MALI);
+		// STV: la comprobacion que el comentario de arriba pide desde hace anos.
+		//
+		// MEDIDO en esta consola: driverVersion=0a000000 -> major=40, o sea la
+		// version donde upstream dice que el bug esta arreglado. Y el bit se
+		// ponia en el 100 % de los shaders de la escena (236 de 236, 395 de
+		// 395), forzando `gl_FragDepth = gl_FragCoord.z` en cada uno
+		// (FragmentShaderGenerator.cpp:1172) para obligar tests tardios. Eso
+		// apaga el early-ZS y el Forward Pixel Kill de Mali: en una escena con
+		// mucho overdraw se sombrean pixeles que estan tapados.
+		//
+		// Se conserva para drivers viejos y para los que no reportan version
+		// (isOldVersion), que son los que tenian el bug de verdad.
+		const bool maliArregla = (majorVersion >= 40) && !isOldVersion;
+		INFO_LOG(Log::G3D, "STVBUG: driverVersion=%08x major=%d hashVersion=%d -> workaround stencil %s",
+			deviceProps.driverVersion, majorVersion, (int)isOldVersion,
+			maliArregla ? "OMITIDO (driver >= r40)" : "infestado");
+		if (!maliArregla) {
+			bugs_.Infest(Bugs::NO_DEPTH_CANNOT_DISCARD_STENCIL_MALI);
+		}
 
 		// This started in driver 31 or 32, fixed in 40 - let's add a check once confirmed.
 		if (majorVersion >= 32) {
