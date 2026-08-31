@@ -1622,7 +1622,9 @@ void GPUCommon::DoState(PointerWrap &p) {
 }
 
 void GPUCommon::InterruptStart(int listid) {
-	stvge::CandadoGe candadoGe(stvmed::R_CAND_INTERRUPT);  // STV_GE_THREAD_v1
+	// STV: SIN candado grueso. Lo unico que toca es interruptRunning, y ese
+	// campo solo lo miran InterruptStart/InterruptEnd y el savestate — no es
+	// estado de GPU. Verificado con grep sobre todo el arbol.
 	stvge::CandadoDL zonaDL("InterruptStart");   // contabilidad de listas
 	interruptRunning = true;
 }
@@ -1630,7 +1632,30 @@ void GPUCommon::InterruptStart(int listid) {
 void GPUCommon::InterruptEnd(int listid) {
 	// STV_GE_THREAD_v1: toca dls[], la cola y puede restaurar contexto
 	// (gstate.Restore + ReapplyGfxState) mientras el worker corre otra lista.
-	stvge::CandadoGe candadoGe(stvmed::R_CAND_INTERRUPT);
+	// STV — DOS FASES, para no pagar el candado grueso en el camino comun.
+	//
+	// El grueso hace falta SOLO por dos ramas: restaurar contexto de GPU
+	// (gstate.Restore + ReapplyGfxState) y tocar dlQueue/currentList via
+	// PopDLQueue. MEDIDO en Spiderman 3, ranura 4, 16.638 llamadas:
+	//     compl=16638 (100 %)   pop=0   conGpu=0
+	// o sea que ninguna de las dos se ejecuto NI UNA VEZ: el cuerpo entero fue
+	// contabilidad. Por eso se decide primero y se toma el grueso solo si toca.
+	//
+	// EL ORDEN SE RESPETA: la fase 1 SUELTA el fino antes de que la fase 2 tome
+	// el grueso. Nunca se pide grueso teniendo fino — que es exactamente el
+	// ciclo que colgo la consola en el primer intento.
+	bool necesitaGrueso;
+	{
+		stvge::CandadoDL zonaMirar("InterruptEnd::mirar");
+		const DisplayList &d = dls[listid];
+		const bool completada = (d.state == PSP_GE_DL_STATE_COMPLETED || d.state == PSP_GE_DL_STATE_NONE);
+		necesitaGrueso = completada && ((d.started && d.context.IsValid()) || !dlQueue.empty());
+	}
+	std::unique_lock<std::recursive_mutex> candadoGe(stvge::g_mu, std::defer_lock);
+	if (necesitaGrueso && stvge::NivelActivo() != 0) {
+		stvmed::Cronometro c(stvmed::R_CAND_INTERRUPT);
+		candadoGe.lock();
+	}
 	stvge::CandadoDL zonaDL("InterruptEnd");   // contabilidad de listas
 	interruptRunning = false;
 	isbreak = false;

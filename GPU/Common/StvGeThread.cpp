@@ -527,7 +527,7 @@ static uint32_t g_dlFinoRevision = 0;
 // codigo (los 24 sitios protegidos + el testigo) porque no cuesta nada y sirve
 // de base cuando se saque el Restore del camino de la interrupcion, que es el
 // arreglo de fondo. Pero la valvula NO puede quedar como gatillo en una imagen.
-bool DLFinoActivo() { return false; }
+bool DLFinoActivo() { return g_dlFino != 0; }   // reactivada: ver el commit de las dos fases
 
 static int ResolverDLFino() {
 	const char *e = getenv("STV_GE_DLFINO");
@@ -739,7 +739,7 @@ void PorVblank() {
 		g_dlFino = ResolverDLFino();
 		if (g_dlFino != antes) {
 			char b[144];
-			snprintf(b, sizeof(b), "STV: dlfino pedido=%d pero CLAVADO en 0 (diseño refutado: cuelga)", g_dlFino);
+			snprintf(b, sizeof(b), "STV: dlfino %s (debug.stv.dlfino)", g_dlFino ? "ENCENDIDO" : "apagado");
 			Emitir(b);
 		}
 	}
