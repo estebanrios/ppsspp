@@ -163,7 +163,8 @@ private:
 // mas que el rendimiento mejore.
 inline std::recursive_mutex g_muDL;
 
-inline bool DLFinoActivo();
+// (definida en StvGeThread.cpp: NO va inline, o el simbolo no se emite)
+bool DLFinoActivo();
 
 // --- TESTIGO DE EXCLUSION SOBRE LA CONTABILIDAD DE LISTAS --------------------
 //
