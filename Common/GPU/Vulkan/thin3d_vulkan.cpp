@@ -1054,6 +1054,19 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 		// Nearly identical to the the Adreno bug, see #13833 (Midnight Club map broken) and other issues.
 		// It has the additional caveat that combining depth writes with NEVER depth tests crashes the driver.
 		// Reported fixed in major version 40 - let's add a check once confirmed.
+		//
+		// STV: primero MEDIR, no asumir. Este workaround fuerza
+		// `gl_FragDepth = gl_FragCoord.z` en los draws afectados
+		// (FragmentShaderGenerator.cpp:1172), lo que apaga a proposito el
+		// early-ZS y el Forward Pixel Kill de Mali -- justo lo que evitaria
+		// sombrear pixeles tapados en una escena con overdraw.
+		//
+		// El driver de esta consola es r40p0, o sea la version donde upstream
+		// dice que esta arreglado, y aca se infesta INCONDICIONALMENTE aunque
+		// majorVersion ya esta calculado dos lineas arriba. Se loguea para
+		// saber que valor tiene de verdad antes de condicionar nada.
+		INFO_LOG(Log::G3D, "STVBUG: driverVersion=%08x major=%d hashVersion=%d -> NO_DEPTH_CANNOT_DISCARD_STENCIL_MALI infestado",
+			deviceProps.driverVersion, majorVersion, (int)isOldVersion);
 		bugs_.Infest(Bugs::NO_DEPTH_CANNOT_DISCARD_STENCIL_MALI);
 
 		// This started in driver 31 or 32, fixed in 40 - let's add a check once confirmed.

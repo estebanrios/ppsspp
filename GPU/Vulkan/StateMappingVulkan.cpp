@@ -362,6 +362,8 @@ void DrawEngineVulkan::BindShaderBlendTex() {
 	// Set the nearest/linear here (since we correctly know if alpha/color tests are needed)?
 	if (!gstate.isModeClear()) {
 		if (fboTexBindState_ == FBO_TEX_COPY_BIND_TEX) {
+			extern void StvContarCopiaBlend();
+			StvContarCopiaBlend();   // STV: cada una copia el render target ENTERO
 			VirtualFramebuffer *curRenderVfb = framebufferManager_->GetCurrentRenderVFB();
 			bool bindResult = framebufferManager_->BindFramebufferAsColorTexture(1, curRenderVfb, BINDFBCOLOR_MAY_COPY | BINDFBCOLOR_UNCACHED, Draw::ALL_LAYERS);
 			_dbg_assert_(bindResult);

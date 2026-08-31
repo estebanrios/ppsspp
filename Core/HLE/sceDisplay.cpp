@@ -582,6 +582,19 @@ void hleEnterVblank(u64 userdata, int cyclesLate) {
 	// terminaciones del cuadro queden agendadas antes de despertar al juego.
 	stvge::PorVblank();
 	StvVpsPorVblank();
+	{   // STV: volcado de los contadores de framebuffer, 1/s, por prop
+		static int cnt = 0;
+		if (++cnt >= 60) {
+			cnt = 0;
+#ifdef __ANDROID__
+			char v[PROP_VALUE_MAX] = {0};
+			if (__system_property_get("debug.stv.fbcnt", v) > 0 && v[0] == '1') {
+				extern void StvVolcarContadores();
+				StvVolcarContadores();
+			}
+#endif
+		}
+	}
 
 	int vbCount = userdata;
 

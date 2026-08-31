@@ -397,6 +397,9 @@ void ComputeFragmentShaderID(FShaderID *id_out, const ComputedPipelineState &pip
 				bool stencilWithoutDepth = (!gstate.isDepthTestEnabled() || !gstate.isDepthWriteEnabled()) && !IsStencilTestOutputDisabled();
 				if (stencilWithoutDepth) {
 					id.SetBit(FS_BIT_NO_DEPTH_CANNOT_DISCARD_STENCIL, stencilWithoutDepth);
+					// STV: contar cuantos shaders llevan el workaround. Si sale 0,
+					// quitarlo no puede dar nada y la linea se cierra sin tocar codigo.
+					{ extern void StvContarDraw(bool); StvContarDraw(stencilWithoutDepth); }
 				}
 			}
 		}

@@ -208,6 +208,24 @@ void DrawEngineVulkan::Invalidate(InvalidationCallbackFlags flags) {
 }
 
 // The inline wrapper in the header checks for numDrawCalls_ == 0
+// STV: contadores para decidir dos lineas SIN adivinar.
+//   stvDrawsSinDepth: draws que caen en el workaround NO_DEPTH_CANNOT_DISCARD
+//                     (si es 0, quitar el workaround no puede dar nada)
+//   stvCopiasBlend:   veces que hay que COPIAR el render target entero para
+//                     poder leerlo (framebufferFetch esta en false duro en
+//                     Vulkan); cada una corta el render pass en un tiler.
+// Se vuelcan por prop debug.stv.fbcnt para no ensuciar cuando no se miden.
+static uint32_t stvDrawsSinDepth = 0;
+static uint32_t stvCopiasBlend = 0;
+static uint32_t stvDrawsTotal = 0;
+void StvContarDraw(bool sinDepth) { stvDrawsTotal++; if (sinDepth) stvDrawsSinDepth++; }
+void StvContarCopiaBlend() { stvCopiasBlend++; }
+void StvVolcarContadores() {
+	INFO_LOG(Log::G3D, "STVFB: draws=%u sin_depth_write=%u copias_blend=%u",
+		stvDrawsTotal, stvDrawsSinDepth, stvCopiasBlend);
+	stvDrawsTotal = 0; stvDrawsSinDepth = 0; stvCopiasBlend = 0;
+}
+
 void DrawEngineVulkan::Flush() {
 	if (!numDrawVerts_) {
 		return;
