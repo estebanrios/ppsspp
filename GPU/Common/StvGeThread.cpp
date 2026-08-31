@@ -301,9 +301,21 @@ static std::atomic<uint64_t> g_invalDiferidas{0};
 static std::atomic<size_t> g_invalCuenta{0};   // espejo barato de g_invalPend.size()
 static std::atomic<uint64_t> g_invalDirectas{0};
 
-// Valvula: 1 = diferir, 0 = upstream exacto (DEFAULT). Misma regla del typo que
+// Valvula: 1 = diferir (DEFAULT), 0 = upstream exacto. Misma regla del typo que
 // el resto: un caracter no-digito vale el default, no cero.
-inline constexpr int kInvalDefecto = 0;
+//
+// ARRANCA ENCENDIDA porque esta medido y validado en las tres dimensiones:
+//   rendimiento  Spiderman 3 escena del incendio  44,7 -> 59,8 VPS de mediana
+//                (p95 42,4 -> 44,7 ; p99 42,0 -> 42,8), y el testigo confirma
+//                que cand_invalidate cae de 8,9 ms/cuadro a 0,015.
+//   no-regresion God of War escena de la explosion 59,9 -> 60,0 (p99 51,6 ->
+//                53,9). El worker ya sumaba ahi; el diferido no le quita nada.
+//   imagen       capturas de la misma escena: la diferencia contra el control
+//                queda DENTRO del ruido de dos controles identicos entre si
+//                (0,54 contra 0,49 de diferencia media; el fuego se anima, asi
+//                que ni dos capturas iguales coinciden).
+// Se apaga con debug.stv.inval=0 sin recompilar.
+inline constexpr int kInvalDefecto = 1;
 static int InvalDeTexto(const char *s) {
 	if (!s || !*s) return kInvalDefecto;
 	if (*s < '0' || *s > '9') return kInvalDefecto;
