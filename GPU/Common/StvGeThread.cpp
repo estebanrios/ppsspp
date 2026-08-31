@@ -224,6 +224,10 @@ static void AfinidadCluster(bool soloGrandes) {
 
 // Declarada aca porque la pasada del worker (mas abajo) la usa antes de su
 // definicion, que vive junto al resto del mecanismo de diferido.
+// Puntero al lock de la pasada del worker: lo publica el propio worker antes
+// de entrar a ProcessDLQueue y lo retira al salir. Solo se usa bajo EnWorker().
+static std::unique_lock<std::recursive_mutex> *g_lockPasada = nullptr;
+
 static void DrenarInvalidaciones();
 
 static void WorkerMain() {
@@ -262,7 +266,9 @@ static void WorkerMain() {
 				ge.lock();
 			}
 			stvmed::Cronometro cPasada(stvmed::R_W_PASADA);
+			g_lockPasada = &ge;
 			DLResult r = gpu->ProcessDLQueue();
+			g_lockPasada = nullptr;
 			// DebugBreak es imposible aca: el dispatch degrada a inline
 			// cuando hay debugger/recorder activo (StvGeExigeInline).
 			_dbg_assert_(r != DLResult::DebugBreak);
@@ -385,6 +391,58 @@ static void DrenarInvalidaciones() {
 		return;
 	for (const InvalPend &i : lote)
 		gpu->InvalidateCache(i.addr, i.size, (GPUInvalidationType)i.type);
+}
+
+
+// --- Cesion en frontera de lista ---------------------------------------------
+//
+// Ver el porque en StvGeThread.h. El puntero al lock de la pasada lo publica el
+// worker antes de entrar a ProcessDLQueue y lo retira al salir; nadie mas lo
+// toca (solo se usa bajo EnWorker()).
+static std::atomic<uint64_t> g_cesiones{0};
+static std::atomic<uint64_t> g_cesionesSaltadas{0};
+
+inline constexpr int kCederDefecto = 0;
+static int CederDeTexto(const char *s) {
+	if (!s || !*s) return kCederDefecto;
+	if (*s < '0' || *s > '9') return kCederDefecto;
+	return (*s - '0') ? 1 : 0;
+}
+static int g_cederNivel = kCederDefecto;
+static uint32_t g_cederRevision = 0;
+static uint32_t g_cederAnuncio = 0;
+
+static int ResolverCeder() {
+	const char *e = getenv("STV_GE_CEDER");
+	if (e && *e)
+		return CederDeTexto(e);
+#if defined(__ANDROID__)
+	char prop[PROP_VALUE_MAX] = { 0 };
+	if (__system_property_get("debug.stv.ceder", prop) > 0 && prop[0])
+		return CederDeTexto(prop);
+#endif
+	return kCederDefecto;
+}
+
+void CederEnFronteraDeLista() {
+	if (g_cederNivel == 0 || !g_lockPasada)
+		return;
+	if (!EnWorker())
+		return;
+	// Con un CandadoGe anidado vivo, soltar UNA vez no libera el recursivo y
+	// ademas romperia su invariante. Se cuenta, no se supone.
+	if (g_candadosVivos != 0) {
+		g_cesionesSaltadas.fetch_add(1, std::memory_order_relaxed);
+		return;
+	}
+	// Nadie esperando: ceder seria pagar un sched_yield por lista a cambio de
+	// nada. Con carga real esto es lo normal entre rafagas.
+	if (g_esperandoGe.load(std::memory_order_relaxed) == 0)
+		return;
+	g_lockPasada->unlock();
+	std::this_thread::yield();
+	g_lockPasada->lock();
+	g_cesiones.fetch_add(1, std::memory_order_relaxed);
 }
 
 static void CrearWorker() {
@@ -580,6 +638,26 @@ void PorVblank() {
 	// Releida cada vblank (a diferencia del contador de epi: aca la llamada ya
 	// es 1/cuadro, la prop cuesta ~nada y el A/B conmuta al toque).
 	const uint32_t vb = g_vblanksDeJuego.fetch_add(1, std::memory_order_relaxed) + 1;
+	if (++g_cederRevision >= kInvalFramesRevision) {
+		g_cederRevision = 0;
+		const int antesCeder = g_cederNivel;
+		g_cederNivel = ResolverCeder();
+		if (g_cederNivel != antesCeder) {
+			char b[160];
+			snprintf(b, sizeof(b), "STV: ceder en frontera %s (debug.stv.ceder)",
+				g_cederNivel ? "ENCENDIDO" : "apagado");
+			Emitir(b);
+		}
+		if (++g_cederAnuncio >= kInvalAnuncioCada) {
+			g_cederAnuncio = 0;
+			char b[160];
+			snprintf(b, sizeof(b), "STV: ceder nivel=%d cesiones=%llu saltadas=%llu",
+				g_cederNivel,
+				(unsigned long long)g_cesiones.load(std::memory_order_relaxed),
+				(unsigned long long)g_cesionesSaltadas.load(std::memory_order_relaxed));
+			Emitir(b);
+		}
+	}
 	if (++g_invalRevision >= kInvalFramesRevision) {
 		g_invalRevision = 0;
 		const int antesInval = g_invalNivel;

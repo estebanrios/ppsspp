@@ -87,6 +87,18 @@ inline std::recursive_mutex g_mu;
 // nada: un load relaxed y un branch predecible a frecuencia de syscall — el
 // comportamiento queda byte-identico a upstream. Con nivel > 0 serializa
 // contra la pasada del worker.
+// Profundidad de CandadoGe VIVOS en este hilo. La cesion en frontera de lista
+// solo es segura si el unico tenedor del candado es el lock de la pasada del
+// worker; si hubiera un CandadoGe anidado, soltar una vez no liberaria nada
+// (g_mu es recursivo) y ademas romperia su invariante. Con el contador en 0 la
+// cesion es correcta por construccion, no por inspeccion.
+inline thread_local int g_candadosVivos = 0;
+
+// Cuantos hilos estan BLOQUEADOS esperando g_mu ahora mismo. Lo usa la cesion
+// en frontera de lista para no pagar un sched_yield por lista cuando no hay
+// nadie a quien cederle: con la cola vacia, ceder es puro costo.
+inline std::atomic<int> g_esperandoGe{0};
+
 class CandadoGe {
 public:
 	// STV_MEDIDOR_ESPERAS_v1: la ranura dice QUE sitio del cuadro esta
@@ -96,12 +108,17 @@ public:
 	explicit CandadoGe(stvmed::Ranura ranura = stvmed::R_CAND_OTRO) : tomado_(NivelActivo() != 0) {
 		if (tomado_) {
 			stvmed::Cronometro c(ranura);
+			g_esperandoGe.fetch_add(1, std::memory_order_relaxed);
 			g_mu.lock();
+			g_esperandoGe.fetch_sub(1, std::memory_order_relaxed);
+			++g_candadosVivos;
 		}
 	}
 	~CandadoGe() {
-		if (tomado_)
+		if (tomado_) {
+			--g_candadosVivos;
 			g_mu.unlock();
+		}
 	}
 	CandadoGe(const CandadoGe &) = delete;
 	CandadoGe &operator=(const CandadoGe &) = delete;
@@ -133,6 +150,25 @@ private:
 // que hacerla ahi mismo (worker apagado, candado libre, cola llena o valvula
 // en 0). Con la valvula en 0 devuelve false SIEMPRE: upstream exacto.
 bool DiferirInvalidacion(uint32_t addr, int size, int type);
+
+// --- Cesion en frontera de lista (valvula debug.stv.ceder) -------------------
+//
+// EL PROBLEMA MEDIDO (Spiderman 3, escena del incendio grande, ranura 3): en
+// las ventanas LENTAS el EmuThread espera 4,07 ms por cuadro en cand_encola
+// contra 0,76 en las rapidas. Es sceGeListEnQueue pidiendo g_mu mientras el
+// worker lo retiene de punta a punta de su pasada. EnqueueList no toca nada de
+// GPU — solo dls[], dlQueue y currentList— pero igual queda detras del candado
+// grueso hasta que la pasada entera termina.
+//
+// POR QUE LA FRONTERA ES LEGITIMA: se cede al TERMINAR cada lista, despues de
+// FinishDeferred() y de sacarla de la cola, justo antes de elegir la siguiente.
+// Ese es exactamente un punto en el que upstream YA puede retornar al EmuThread
+// (DLResult::Done sale de ahi), asi que el estado que queda expuesto no es
+// nuevo: es el mismo que ve el camino inline entre dos ProcessDLQueue.
+//
+// No cambia el orden de ejecucion de las listas ni el trabajo que se hace:
+// solo abre una ventana para que el que espera entre antes.
+void CederEnFronteraDeLista();
 
 // Identidad de hilo: true SOLO en el worker. Es lo que consulta el choke point
 // de __GeTriggerSync/__GeTriggerInterrupt en sceGe.cpp para decidir si postear.

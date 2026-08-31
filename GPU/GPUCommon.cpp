@@ -912,6 +912,16 @@ DLResult GPUCommon::ProcessDLQueue() {
 			// At the end, we can remove it from the queue and continue.
 			dlQueue.erase(std::remove(dlQueue.begin(), dlQueue.end(), listIndex), dlQueue.end());
 		}
+
+		// STV_GE_THREAD_v1: frontera entre listas. La lista ya termino
+		// (FinishDeferred hecho, estado comiteado, sacada de la cola) y la
+		// siguiente todavia no se eligio — el mismo punto en el que upstream
+		// puede retornar con DLResult::Done. Si el worker esta corriendo, aca
+		// suelta y retoma el candado grueso para que el EmuThread pueda
+		// encolar sin esperar la pasada entera (medido: 4,07 ms por cuadro de
+		// espera en cand_encola en las ventanas lentas). Con la valvula
+		// apagada, o fuera del worker, es un load y una rama.
+		stvge::CederEnFronteraDeLista();
 	}
 
 	currentList = nullptr;
