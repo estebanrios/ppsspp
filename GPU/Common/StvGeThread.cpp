@@ -486,12 +486,12 @@ void ProbarTestigoDL() {
 	Emitir("STV: dl PROBANDO el testigo (se espera 1 colision)");
 	std::thread([]{
 		SetCurrentThreadName("StvProbaDL");
-		TestigoDL dentro;                       // entra el hilo de prueba
+		TestigoDL dentro("PRUEBA-hilo");        // entra el hilo de prueba
 		std::this_thread::sleep_for(std::chrono::milliseconds(150));
 	}).detach();
 	std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	{
-		TestigoDL dentro;                       // y entra este, encima
+		TestigoDL dentro("PRUEBA-encima");      // y entra este, encima
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
 	char b[160];
@@ -704,11 +704,16 @@ void PorVblank() {
 		if (++g_dlAnuncio >= kInvalAnuncioCada) {
 			g_dlAnuncio = 0;
 			char b[176];
-			snprintf(b, sizeof(b), "STV: dl entradas=%llu COLISIONES=%llu pico=%d dentro=%d",
+			const char *sChoque = g_choqueSitio.load(std::memory_order_relaxed);
+			const char *sDuenio = g_choqueDueñoSitio.load(std::memory_order_relaxed);
+			snprintf(b, sizeof(b),
+				"STV: dl entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
 				(unsigned long long)g_entradasDL.load(std::memory_order_relaxed),
 				(unsigned long long)g_colisionesDL.load(std::memory_order_relaxed),
 				g_picoDL.load(std::memory_order_relaxed),
-				g_dentroDL.load(std::memory_order_relaxed));
+				g_dentroDL.load(std::memory_order_relaxed),
+				g_choqueTid.load(std::memory_order_relaxed),
+				sChoque ? sChoque : "-", sDuenio ? sDuenio : "-");
 			Emitir(b);
 		}
 	}

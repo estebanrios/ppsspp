@@ -44,6 +44,7 @@
 #pragma once
 
 #include <atomic>
+#include <unistd.h>
 #include <cstdint>
 #include <mutex>
 
@@ -156,17 +157,32 @@ inline std::atomic<int> g_dentroDL{0};
 inline std::atomic<uint64_t> g_colisionesDL{0};
 inline std::atomic<uint64_t> g_entradasDL{0};
 inline std::atomic<int> g_picoDL{0};
+// IDENTIDAD de la colision: quien estaba adentro, quien entro encima, y en que
+// sitio cada uno. Sin esto el contador dice QUE pasa pero no QUIENES, y habria
+// que deducirlo — que es justo lo que no queremos hacer con una carrera.
+inline std::atomic<int> g_dueñoDL{0};          // tid del que entro primero
+inline std::atomic<const char *> g_sitioDL{nullptr};
+inline std::atomic<int> g_choqueTid{0};
+inline std::atomic<const char *> g_choqueSitio{nullptr};
+inline std::atomic<const char *> g_choqueDueñoSitio{nullptr};
 
 class TestigoDL {
 public:
-	TestigoDL() {
+	explicit TestigoDL(const char *sitio) {
 		const int antes = g_dentroDL.fetch_add(1, std::memory_order_acq_rel);
 		g_entradasDL.fetch_add(1, std::memory_order_relaxed);
+		const int yo = (int)gettid();
 		if (antes != 0) {
 			g_colisionesDL.fetch_add(1, std::memory_order_relaxed);
+			g_choqueTid.store(yo, std::memory_order_relaxed);
+			g_choqueSitio.store(sitio, std::memory_order_relaxed);
+			g_choqueDueñoSitio.store(g_sitioDL.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			int pico = g_picoDL.load(std::memory_order_relaxed);
 			while (antes + 1 > pico &&
 			       !g_picoDL.compare_exchange_weak(pico, antes + 1, std::memory_order_relaxed)) {}
+		} else {
+			g_dueñoDL.store(yo, std::memory_order_relaxed);
+			g_sitioDL.store(sitio, std::memory_order_relaxed);
 		}
 	}
 	~TestigoDL() { g_dentroDL.fetch_sub(1, std::memory_order_acq_rel); }

@@ -104,7 +104,7 @@ public:
 		}
 		// Zona de contabilidad de listas: el testigo cuenta entradas y, sobre
 		// todo, ENTRADAS CONCURRENTES. Con el candado grueso debe dar 0.
-		stvge::TestigoDL testigoDL;
+		stvge::TestigoDL testigoDL("GeIntr::run");
 
 		if (ge_pending_cb.empty()) {
 			ERROR_LOG_REPORT(Log::sceGe, "Unable to run GE interrupt: no pending interrupt");
@@ -203,7 +203,7 @@ public:
 			stvmed::Cronometro c(stvmed::R_CAND_INTERRUPT);   // STV_MEDIDOR: ver run()
 			candadoGe.lock();
 		}
-		stvge::TestigoDL testigoDL;   // ver run()
+		stvge::TestigoDL testigoDL("GeIntr::handleResult");   // ver run()
 
 		GeInterruptData intrdata = ge_pending_cb.front();
 		ge_pending_cb.pop_front();
