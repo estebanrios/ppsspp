@@ -40,6 +40,7 @@
 #include "Core/HLE/KernelWaitHelpers.h"
 #include "GPU/GPUState.h"
 #include "GPU/GPUCommon.h"
+#include "Common/StvMedidor.h"
 #include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 
 static const int LIST_ID_MAGIC = 0x35000000;
@@ -90,9 +91,17 @@ public:
 		// candado hasta antes del despacho final, que se suelta explicitamente
 		// porque el despacho en nivel 1 espera al worker (deadlock si lo
 		// tuvieramos tomado). Los returns tempranos lo sueltan por RAII.
+		// STV_MEDIDOR: esta toma NO pasa por CandadoGe, asi que el medidor no la
+		// veia y su costo aparecia como "resto" — el campo que existe justo para
+		// declarar lo que no se cronometra. La traza off-CPU la señalo como EL
+		// sitio de bloqueo mas grande del EmuThread (21,9 % de su tiempo dormido,
+		// contra 1,24 % de todas las tomas instrumentadas juntas). Se cronometra
+		// con la misma ranura que el resto del camino de interrupciones.
 		std::unique_lock<std::recursive_mutex> candadoGe(stvge::g_mu, std::defer_lock);
-		if (stvge::NivelActivo() != 0)
+		if (stvge::NivelActivo() != 0) {
+			stvmed::Cronometro c(stvmed::R_CAND_INTERRUPT);
 			candadoGe.lock();
+		}
 
 		if (ge_pending_cb.empty()) {
 			ERROR_LOG_REPORT(Log::sceGe, "Unable to run GE interrupt: no pending interrupt");
@@ -187,8 +196,10 @@ public:
 		// STV_GE_THREAD_v1: mismo esquema que run() — candado sobre el estado,
 		// soltado antes del despacho final.
 		std::unique_lock<std::recursive_mutex> candadoGe(stvge::g_mu, std::defer_lock);
-		if (stvge::NivelActivo() != 0)
+		if (stvge::NivelActivo() != 0) {
+			stvmed::Cronometro c(stvmed::R_CAND_INTERRUPT);   // STV_MEDIDOR: ver run()
 			candadoGe.lock();
+		}
 
 		GeInterruptData intrdata = ge_pending_cb.front();
 		ge_pending_cb.pop_front();
