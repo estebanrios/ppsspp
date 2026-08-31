@@ -169,6 +169,8 @@ inline std::recursive_mutex g_muDL;
 // funcion en dos fases.
 inline std::atomic<uint64_t> g_intrEndTotal{0};
 inline std::atomic<uint64_t> g_intrEndConGpu{0};
+inline std::atomic<uint64_t> g_intrEndCompletada{0};   // rama externa: toca dlQueue/currentList
+inline std::atomic<uint64_t> g_intrEndPop{0};          // y llega a PopDLQueue (escribe currentList)
 
 // (definida en StvGeThread.cpp: NO va inline, o el simbolo no se emite)
 bool DLFinoActivo();

@@ -1643,6 +1643,7 @@ void GPUCommon::InterruptEnd(int listid) {
 	// raro es, se mide.
 	stvge::g_intrEndTotal.fetch_add(1, std::memory_order_relaxed);
 	if (dl.state == PSP_GE_DL_STATE_COMPLETED || dl.state == PSP_GE_DL_STATE_NONE) {
+		stvge::g_intrEndCompletada.fetch_add(1, std::memory_order_relaxed);
 		if (dl.started && dl.context.IsValid()) {
 			stvge::g_intrEndConGpu.fetch_add(1, std::memory_order_relaxed);
 			gstate.Restore(dl.context);
@@ -1653,6 +1654,7 @@ void GPUCommon::InterruptEnd(int listid) {
 
 		// Make sure the list isn't still queued since it's now completed.
 		if (!dlQueue.empty()) {
+			stvge::g_intrEndPop.fetch_add(1, std::memory_order_relaxed);
 			if (listid == dlQueue.front())
 				PopDLQueue();
 			else
