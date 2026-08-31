@@ -130,6 +130,41 @@ private:
 
 // --- API del modulo (implementada en StvGeThread.cpp) ------------------------
 
+// --- CANDADO FINO DE LA CONTABILIDAD DE LISTAS (valvula debug.stv.dlfino) ----
+//
+// EL PROBLEMA MEDIDO (Spiderman 3, ranura 4): el EmuThread pierde 3,2 ms POR
+// CUADRO en 10 tomas, esperando g_mu dentro del manejador de interrupciones del
+// GE. El worker retiene g_mu 2,45 ms seguidos por pasada (3 pasadas/cuadro) y
+// el manejador queda detras. Quitar esa espera lleva el cuadro de 18,6 a 15,4
+// ms = 65 VPS: el techo de 60 con margen.
+//
+// POR QUE SE PUEDE SEPARAR: el manejador NO toca currentList — que es lo que el
+// lazo caliente (Execute_Jump/Ret/UpdatePC) usa sin parar. Toca los campos de
+// UNA lista (state, signal, subIntrBase, subIntrToken), dlQueue y su propia
+// ge_pending_cb. Ese conjunto se puede proteger aparte, y el worker solo
+// necesita tomarlo en las FRONTERAS (elegir lista, cambiar estado, sacarla de
+// la cola) y en los pocos comandos que cambian estado (Signal/End), no durante
+// FastRunLoop.
+//
+// ORDEN DE CANDADOS: g_mu -> g_muDL. Quien tenga el grueso puede tomar el fino;
+// nunca al reves. Es la misma regla que ya rige para g_muCola y g_muInval, y se
+// respeta porque el fino solo se toma en hojas.
+//
+// VALVULA: debug.stv.dlfino. En 0 (DEFAULT) el manejador sigue tomando el
+// candado GRUESO y todo queda byte-identico a hoy; el fino se toma igual en los
+// dos casos, asi que el camino nuevo se ejercita sin depender de la valvula y
+// una carrera aparece en el testigo aunque este apagado.
+//
+// EL TESTIGO ES LA RED: TestigoDL cuenta ENTRADAS CONCURRENTES a esta zona.
+// Validado en las dos direcciones antes de escribir una linea de esto: con el
+// candado grueso da 0 colisiones en 95.015 entradas, y con una colision
+// inyectada a proposito grita y nombra al culpable. Si el refactor deja un
+// sitio suelto, el aparato lo dice. NO SE HORNEA con una sola colision, por
+// mas que el rendimiento mejore.
+inline std::recursive_mutex g_muDL;
+
+inline bool DLFinoActivo();
+
 // --- TESTIGO DE EXCLUSION SOBRE LA CONTABILIDAD DE LISTAS --------------------
 //
 // PARA QUE: el arreglo del candado de las interrupciones cambia QUIEN serializa
@@ -201,6 +236,27 @@ public:
 
 private:
 	bool soltado_ = false;
+};
+
+// La primitiva de la zona: toma el candado fino Y enciende el testigo, en ese
+// orden. Asi es IMPOSIBLE proteger un sitio y olvidarse de vigilarlo — que es
+// como se cuelan las carreras en un refactor de candados.
+// El testigo se construye DESPUES del lock (orden de miembros) y se destruye
+// ANTES, de modo que solo cuenta mientras el candado esta tomado.
+class CandadoDL {
+public:
+	explicit CandadoDL(const char *sitio) : lk_(g_muDL), testigo_(sitio) {}
+	// Liberacion explicita: hace falta en GeIntrHandler, que suelta ANTES del
+	// despacho final porque ese despacho espera al worker (y el worker necesita
+	// este mismo candado: tenerlo tomado seria un abrazo mortal).
+	void soltar() {
+		if (lk_.owns_lock()) { testigo_.soltar(); lk_.unlock(); }
+	}
+	CandadoDL(const CandadoDL &) = delete;
+	CandadoDL &operator=(const CandadoDL &) = delete;
+private:
+	std::unique_lock<std::recursive_mutex> lk_;
+	TestigoDL testigo_;
 };
 
 // Colision a proposito, para comprobar que el testigo SABE gritar. La enciende

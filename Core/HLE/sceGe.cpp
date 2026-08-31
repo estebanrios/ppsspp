@@ -55,6 +55,7 @@ static const int LIST_ID_MAGIC = 0x35000000;
 // worker en vuelo — el split ejecuta ProcessDLQueue en el EmuThread via
 // CORE_RUNNING_GE y no puede convivir con el worker.
 static void StvGeDespacharCola(bool permitirSplit) {
+	stvge::CandadoDL zonaDL("StvGeDespacharCola");   // contabilidad de listas
 	if (permitirSplit && gpu->ShouldSplitOverGe()) {
 		stvge::Barrera();
 		hleSplitSyscallOverGe();
@@ -97,14 +98,18 @@ public:
 		// sitio de bloqueo mas grande del EmuThread (21,9 % de su tiempo dormido,
 		// contra 1,24 % de todas las tomas instrumentadas juntas). Se cronometra
 		// con la misma ranura que el resto del camino de interrupciones.
+		// LA GANANCIA: con el candado fino activo NO se toma el grueso, asi que
+		// este hilo deja de esperar la pasada del worker (2,45 ms) y espera solo
+		// las fronteras (microsegundos). Con la valvula apagada se toman los dos
+		// y el comportamiento es el de hoy.
 		std::unique_lock<std::recursive_mutex> candadoGe(stvge::g_mu, std::defer_lock);
-		if (stvge::NivelActivo() != 0) {
+		if (stvge::NivelActivo() != 0 && !stvge::DLFinoActivo()) {
 			stvmed::Cronometro c(stvmed::R_CAND_INTERRUPT);
 			candadoGe.lock();
 		}
 		// Zona de contabilidad de listas: el testigo cuenta entradas y, sobre
 		// todo, ENTRADAS CONCURRENTES. Con el candado grueso debe dar 0.
-		stvge::TestigoDL testigoDL("GeIntr::run");
+		stvge::CandadoDL testigoDL("GeIntr::run");
 
 		if (ge_pending_cb.empty()) {
 			ERROR_LOG_REPORT(Log::sceGe, "Unable to run GE interrupt: no pending interrupt");
@@ -190,8 +195,8 @@ public:
 		// comentario de handleResult); permitirSplit=false lo preserva. El
 		// candado se suelta ANTES: el despacho puede esperar al worker.
 		if (candadoGe.owns_lock())
-			testigoDL.soltar();   // la guarda muere DONDE muere el candado
-			candadoGe.unlock();
+			testigoDL.soltar();   // el fino se suelta DONDE se suelta el grueso:
+			candadoGe.unlock();   // el despacho final espera al worker
 		StvGeDespacharCola(false);
 		return false;
 	}
@@ -199,12 +204,16 @@ public:
 	void handleResult(PendingInterrupt& pend) override {
 		// STV_GE_THREAD_v1: mismo esquema que run() — candado sobre el estado,
 		// soltado antes del despacho final.
+		// LA GANANCIA: con el candado fino activo NO se toma el grueso, asi que
+		// este hilo deja de esperar la pasada del worker (2,45 ms) y espera solo
+		// las fronteras (microsegundos). Con la valvula apagada se toman los dos
+		// y el comportamiento es el de hoy.
 		std::unique_lock<std::recursive_mutex> candadoGe(stvge::g_mu, std::defer_lock);
-		if (stvge::NivelActivo() != 0) {
+		if (stvge::NivelActivo() != 0 && !stvge::DLFinoActivo()) {
 			stvmed::Cronometro c(stvmed::R_CAND_INTERRUPT);   // STV_MEDIDOR: ver run()
 			candadoGe.lock();
 		}
-		stvge::TestigoDL testigoDL("GeIntr::handleResult");   // ver run()
+		stvge::CandadoDL testigoDL("GeIntr::handleResult");   // ver run()
 
 		GeInterruptData intrdata = ge_pending_cb.front();
 		ge_pending_cb.pop_front();
@@ -245,8 +254,8 @@ public:
 		// it in the background in parallel with the CPU.
 		// So, when debugging is active, we'll just use hleSplitSyscallOverGe.
 		if (candadoGe.owns_lock())
-			testigoDL.soltar();   // la guarda muere DONDE muere el candado
-			candadoGe.unlock();
+			testigoDL.soltar();   // el fino se suelta DONDE se suelta el grueso:
+			candadoGe.unlock();   // el despacho final espera al worker
 		StvGeDespacharCola(true);  // STV_GE_THREAD_v1
 	}
 };
@@ -345,6 +354,7 @@ bool __GeTriggerSync(GPUSyncType type, int id, u64 atTicks) {
 }
 
 bool __GeTriggerInterrupt(int listid, u32 pc, u64 atTicks) {
+	stvge::CandadoDL zonaDL("__GeTriggerInterrupt");   // contabilidad de listas
 	// STV_GE_THREAD_v1: idem __GeTriggerSync. En v1.20.4 esta funcion devuelve
 	// true INCONDICIONALMENTE (verificado: no hay camino que devuelva false),
 	// asi que Execute_End puede tomar su rama pendingInterrupt en el worker

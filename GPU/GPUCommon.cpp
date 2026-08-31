@@ -140,6 +140,7 @@ int GPUCommon::EstimatePerVertexCost() {
 }
 
 void GPUCommon::PopDLQueue() {
+	stvge::CandadoDL zonaDL("PopDLQueue");   // contabilidad de listas
 	if(!dlQueue.empty()) {
 		dlQueue.pop_front();
 		if(!dlQueue.empty()) {
@@ -189,6 +190,7 @@ u32 GPUCommon::DrawSync(int mode) {
 	// el estado final — nunca peor que lo que hoy tarda el inline. mode=1 es
 	// polling: NO se espera (contestar DRAWING mientras el worker corre es la
 	// semantica correcta), solo candado.
+	stvge::CandadoDL zonaDL("DrawSync");   // contabilidad de listas
 	if (mode == 0)
 		stvge::EsperarGeParaSync();
 	stvge::CandadoGe candadoGe;
@@ -235,6 +237,7 @@ u32 GPUCommon::DrawSync(int mode) {
 }
 
 void GPUCommon::CheckDrawSync() {
+	stvge::CandadoDL zonaDL("CheckDrawSync");   // contabilidad de listas
 	if (dlQueue.empty()) {
 		for (int i = 0; i < DisplayListMaxCount; ++i)
 			dls[i].state = PSP_GE_DL_STATE_NONE;
@@ -246,6 +249,7 @@ int GPUCommon::ListSync(int listid, int mode) {
 	// (no "lista completada": una lista stalleada deja al worker idle sin
 	// completarse y ahi el camino original de waitUntilTicks duerme al hilo
 	// emulado, igual que inline) + drenaje, todo antes del candado.
+	stvge::CandadoDL zonaDL("ListSync");   // contabilidad de listas
 	if (mode == 0)
 		stvge::EsperarGeParaSync();
 	stvge::CandadoGe candadoGe;
@@ -379,7 +383,7 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 	// STV_GE_THREAD_v1: puro estado (dls[], dlQueue, currentList) — candado y
 	// nada mas; la ejecucion la despacha el caller DESPUES de soltar esto.
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_ENCOLA);  // STV_MEDIDOR_ESPERAS_v1
-	stvge::TestigoDL testigoDL("EnqueueList");   // zona de contabilidad de listas (ver StvGeThread.h)
+	stvge::CandadoDL testigoDL("EnqueueList");   // zona de contabilidad de listas (ver StvGeThread.h)
 	*runList = false;
 
 	// TODO Check the stack values in missing arg and ajust the stack depth
@@ -500,6 +504,7 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 
 u32 GPUCommon::DequeueList(int listid) {
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_LISTA);  // STV_GE_THREAD_v1
+	stvge::CandadoDL zonaDL("DequeueList");   // contabilidad de listas
 	if (listid < 0 || listid >= DisplayListMaxCount || dls[listid].state == PSP_GE_DL_STATE_NONE)
 		return SCE_KERNEL_ERROR_INVALID_ID;
 
@@ -523,6 +528,7 @@ u32 GPUCommon::DequeueList(int listid) {
 
 u32 GPUCommon::UpdateStall(int listid, u32 newstall, bool *runList) {
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_STALL);  // STV_GE_THREAD_v1: dl.stall es el downcount vivo de la pasada
+	stvge::CandadoDL zonaDL("UpdateStall");   // contabilidad de listas
 	*runList = false;
 	if (listid < 0 || listid >= DisplayListMaxCount || dls[listid].state == PSP_GE_DL_STATE_NONE)
 		return SCE_KERNEL_ERROR_INVALID_ID;
@@ -538,6 +544,7 @@ u32 GPUCommon::UpdateStall(int listid, u32 newstall, bool *runList) {
 
 u32 GPUCommon::Continue(bool *runList) {
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_LISTA);  // STV_GE_THREAD_v1
+	stvge::CandadoDL zonaDL("Continue");   // contabilidad de listas
 	*runList = false;
 	if (!currentList)
 		return 0;
@@ -580,6 +587,7 @@ u32 GPUCommon::Continue(bool *runList) {
 
 u32 GPUCommon::Break(int mode) {
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_LISTA);  // STV_GE_THREAD_v1
+	stvge::CandadoDL zonaDL("Break");   // contabilidad de listas
 	if (mode < 0 || mode > 1)
 		return SCE_KERNEL_ERROR_INVALID_MODE;
 
@@ -771,9 +779,12 @@ inline void GPUCommon::UpdateState(GPURunState state) {
 
 // This is now called when coreState == CORE_RUNNING_GE, in addition to from the various sceGe commands.
 DLResult GPUCommon::ProcessDLQueue() {
-	// El worker recorre dlQueue y escribe dls[].state aca dentro: es la otra
-	// mitad de la zona que el testigo vigila.
-	stvge::TestigoDL testigoDL("ProcessDLQueue");
+	// OJO: aca NO va una guarda de funcion entera. El worker pasa 2,45 ms
+	// seguidos dentro de esto, y retener el candado fino todo ese tiempo seria
+	// mover el problema de sitio en vez de arreglarlo. La zona se toma SOLO en
+	// las fronteras: elegir la lista, arrancarla, cambiarle el estado y sacarla
+	// de la cola. FastRunLoop corre SIN el fino: ahi solo se toca currentList y
+	// list.pc, que son del worker durante la pasada.
 	if (!resumingFromDebugBreak_) {
 		// STV_GE_THREAD_v1: en el worker CoreTiming es territorio ajeno (y su
 		// lectura seria una carrera contra el EmuThread): el startingTicks es
@@ -795,6 +806,7 @@ DLResult GPUCommon::ProcessDLQueue() {
 	TimeCollector collectStat(&gpuStats.msProcessingDisplayLists, coreCollectDebugStats);
 
 	auto GetNextListIndex = [&]() -> int {
+		stvge::CandadoDL zona("ProcessDLQueue::siguiente");
 		if (dlQueue.empty())
 			return -1;
 		return dlQueue.front();
@@ -836,7 +848,10 @@ DLResult GPUCommon::ProcessDLQueue() {
 			cycleLastPC = list.pc;
 			cyclesExecuted += 60;
 			downcount = list.stall == 0 ? 0x0FFFFFFF : (list.stall - list.pc) / 4;
-			list.state = PSP_GE_DL_STATE_RUNNING;
+			{
+				stvge::CandadoDL zona("ProcessDLQueue::arranque");
+				list.state = PSP_GE_DL_STATE_RUNNING;
+			}
 			list.interrupted = false;
 
 			gpuState = list.pc == list.stall ? GPUSTATE_STALL : GPUSTATE_RUNNING;
@@ -912,9 +927,12 @@ DLResult GPUCommon::ProcessDLQueue() {
 
 		// Some other list could've taken the spot while we dilly-dallied around, so we need the check.
 		// Yes, this does happen.
-		if (list.state != PSP_GE_DL_STATE_QUEUED) {
-			// At the end, we can remove it from the queue and continue.
-			dlQueue.erase(std::remove(dlQueue.begin(), dlQueue.end(), listIndex), dlQueue.end());
+		{
+			stvge::CandadoDL zona("ProcessDLQueue::sacar");
+			if (list.state != PSP_GE_DL_STATE_QUEUED) {
+				// At the end, we can remove it from the queue and continue.
+				dlQueue.erase(std::remove(dlQueue.begin(), dlQueue.end(), listIndex), dlQueue.end());
+			}
 		}
 
 		// STV_GE_THREAD_v1: frontera entre listas. La lista ya termino
@@ -1060,6 +1078,12 @@ void GPUCommon::Execute_Ret(u32 op, u32 diff) {
 }
 
 void GPUCommon::Execute_End(u32 op, u32 diff) {
+	// Guarda de FUNCION a proposito: aca hay 13 escrituras a campos que el
+	// manejador de interrupciones lee (state, signal, subIntrToken). Trece
+	// guardas puntuales es la forma segura de que se escape una. Esta funcion
+	// atiende el comando END/SIGNAL — no corre por vertice — asi que retener la
+	// zona lo que dura un comando es despreciable frente al riesgo de un hueco.
+	stvge::CandadoDL zonaDL("Execute_End");
 	if (flushOnParams_) {
 		drawEngineCommon_->FlushQueuedDepth();
 		Flush();
@@ -1599,6 +1623,7 @@ void GPUCommon::DoState(PointerWrap &p) {
 
 void GPUCommon::InterruptStart(int listid) {
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_INTERRUPT);  // STV_GE_THREAD_v1
+	stvge::CandadoDL zonaDL("InterruptStart");   // contabilidad de listas
 	interruptRunning = true;
 }
 
@@ -1606,6 +1631,7 @@ void GPUCommon::InterruptEnd(int listid) {
 	// STV_GE_THREAD_v1: toca dls[], la cola y puede restaurar contexto
 	// (gstate.Restore + ReapplyGfxState) mientras el worker corre otra lista.
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_INTERRUPT);
+	stvge::CandadoDL zonaDL("InterruptEnd");   // contabilidad de listas
 	interruptRunning = false;
 	isbreak = false;
 
@@ -1633,6 +1659,7 @@ void GPUCommon::InterruptEnd(int listid) {
 // TODO: Maybe cleaner to keep this in GE and trigger the clear directly?
 void GPUCommon::SyncEnd(GPUSyncType waitType, int listid, bool wokeThreads) {
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_INTERRUPT);  // STV_GE_THREAD_v1: barre estados de dls[] desde el evento sync
+	stvge::CandadoDL zonaDL("SyncEnd");   // contabilidad de listas
 	if (waitType == GPU_SYNC_DRAW && wokeThreads)
 	{
 		for (int i = 0; i < DisplayListMaxCount; ++i) {
@@ -1670,6 +1697,7 @@ int GPUCommon::GetCurrentPrimCount() {
 }
 
 std::vector<DisplayList> GPUCommon::ActiveDisplayLists() {
+	stvge::CandadoDL zonaDL("ActiveDisplayLists");   // contabilidad de listas
 	std::vector<DisplayList> result;
 	result.reserve(dlQueue.size());
 
@@ -1681,6 +1709,7 @@ std::vector<DisplayList> GPUCommon::ActiveDisplayLists() {
 }
 
 void GPUCommon::ResetListPC(int listID, u32 pc) {
+	stvge::CandadoDL zonaDL("ResetListPC");   // contabilidad de listas
 	if (listID < 0 || listID >= DisplayListMaxCount) {
 		_dbg_assert_msg_(false, "listID out of range: %d", listID);
 		return;
@@ -1692,6 +1721,7 @@ void GPUCommon::ResetListPC(int listID, u32 pc) {
 }
 
 void GPUCommon::ResetListStall(int listID, u32 stall) {
+	stvge::CandadoDL zonaDL("ResetListStall");   // contabilidad de listas
 	if (listID < 0 || listID >= DisplayListMaxCount) {
 		_dbg_assert_msg_(false, "listID out of range: %d", listID);
 		return;
@@ -1703,6 +1733,7 @@ void GPUCommon::ResetListStall(int listID, u32 stall) {
 }
 
 void GPUCommon::ResetListState(int listID, DisplayListState state) {
+	stvge::CandadoDL zonaDL("ResetListState");   // contabilidad de listas
 	if (listID < 0 || listID >= DisplayListMaxCount) {
 		_dbg_assert_msg_(false, "listID out of range: %d", listID);
 		return;

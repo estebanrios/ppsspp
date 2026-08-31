@@ -501,6 +501,31 @@ void ProbarTestigoDL() {
 	Emitir(b);
 }
 
+
+// --- Valvula del candado fino ------------------------------------------------
+//
+// En 0 (DEFAULT) el manejador de interrupciones sigue tomando el candado GRUESO
+// ademas del fino: comportamiento identico a hoy. En 1 toma SOLO el fino y deja
+// de esperar la pasada del worker — que es la ganancia.
+//
+// El candado fino se toma en los 24 sitios en LOS DOS casos, a proposito: asi
+// el camino nuevo se ejercita siempre y una carrera aparece en el testigo
+// aunque la valvula este apagada.
+static int g_dlFino = 0;
+static uint32_t g_dlFinoRevision = 0;
+bool DLFinoActivo() { return g_dlFino != 0; }
+
+static int ResolverDLFino() {
+	const char *e = getenv("STV_GE_DLFINO");
+	if (e && *e) return (*e >= '1' && *e <= '9') ? 1 : 0;
+#if defined(__ANDROID__)
+	char prop[PROP_VALUE_MAX] = { 0 };
+	if (__system_property_get("debug.stv.dlfino", prop) > 0 && prop[0])
+		return (prop[0] >= '1' && prop[0] <= '9') ? 1 : 0;
+#endif
+	return 0;
+}
+
 static void CrearWorker() {
 	g_apagando = false;
 	g_worker = std::thread(&WorkerMain);
@@ -694,6 +719,16 @@ void PorVblank() {
 	// Releida cada vblank (a diferencia del contador de epi: aca la llamada ya
 	// es 1/cuadro, la prop cuesta ~nada y el A/B conmuta al toque).
 	const uint32_t vb = g_vblanksDeJuego.fetch_add(1, std::memory_order_relaxed) + 1;
+	if (++g_dlFinoRevision >= kInvalFramesRevision) {
+		g_dlFinoRevision = 0;
+		const int antes = g_dlFino;
+		g_dlFino = ResolverDLFino();
+		if (g_dlFino != antes) {
+			char b[144];
+			snprintf(b, sizeof(b), "STV: dlfino %s (debug.stv.dlfino)", g_dlFino ? "ENCENDIDO" : "apagado");
+			Emitir(b);
+		}
+	}
 	if (++g_dlRevision >= kInvalFramesRevision) {
 		g_dlRevision = 0;
 #if defined(__ANDROID__)
@@ -707,7 +742,8 @@ void PorVblank() {
 			const char *sChoque = g_choqueSitio.load(std::memory_order_relaxed);
 			const char *sDuenio = g_choqueDueñoSitio.load(std::memory_order_relaxed);
 			snprintf(b, sizeof(b),
-				"STV: dl entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
+				"STV: dl fino=%d entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
+				g_dlFino,
 				(unsigned long long)g_entradasDL.load(std::memory_order_relaxed),
 				(unsigned long long)g_colisionesDL.load(std::memory_order_relaxed),
 				g_picoDL.load(std::memory_order_relaxed),
