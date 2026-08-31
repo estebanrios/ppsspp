@@ -45,6 +45,7 @@
 
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
+#include "Core/MIPS/MIPS.h"
 #include "Core/System.h"
 #include "Core/PSPLoaders.h"
 #include "Core/HLE/sceKernelModule.h"
@@ -247,6 +248,38 @@ static const char * const altBootNames[] = {
 	//"disc0:/PSP_GAME/SYSDIR/ss.RAW",//Code Geass: Lost Colors chinese version
 };
 
+
+// STV — el ajuste CPUCore esta marcado PER_GAME pero el valor por juego NUNCA
+// se aplicaba.
+//
+// EL ORDEN QUE LO ROMPE: EmuScreen fija coreParam.cpuCore desde el g_Config
+// GLOBAL (UI/EmuScreen.cpp, "coreParam.cpuCore = (CPUCore)g_Config.iCpuCore")
+// cuando arma la pantalla; recien despues se carga el ISO, y es el cargador el
+// que llama a LoadGameConfig. O sea que para cuando el ini por juego pone su
+// CPUCore en g_Config, el motor ya esta creado con el valor global y nadie lo
+// vuelve a mirar. Es exactamente el mismo patron que ya nos mordio con
+// InflightFrames (leido al crear el contexto grafico, antes de la config del
+// juego): la clave se lee, se guarda, y no la aplica nadie.
+//
+// POR QUE ACA ES SEGURO CONMUTAR: UpdateCore borra el JIT viejo bajo jitLock y
+// crea el nuevo, y en este punto el juego todavia no ejecuto una sola
+// instruccion — __KernelLoadExec viene DESPUES de esta llamada en las dos
+// rutas de carga. No hay bloques compilados que invalidar ni estado a preservar.
+//
+// MEDIDO (Spiderman 3, escena del incendio, 110 s, worker del GE apagado):
+// CPUCore=1 -> 40,4 VPS de mediana; CPUCore=3 -> 44,7. Sin esto, poner
+// CPUCore=3 en el ini por juego no cambiaba nada y el banco media 40,4.
+static void StvAplicarNucleoDelJuego() {
+	if (!currentMIPS)
+		return;
+	const CPUCore pedido = (CPUCore)g_Config.iCpuCore;
+	if (PSP_CoreParameter().cpuCore == pedido)
+		return;
+	INFO_LOG(Log::Loader, "STV: la config por juego pide CPUCore %d (estaba en %d) - conmutando",
+		(int)pedido, (int)PSP_CoreParameter().cpuCore);
+	currentMIPS->UpdateCore(pedido);
+}
+
 bool Load_PSP_ISO(FileLoader *fileLoader, std::string *error_string) {
 	std::string bootpath("disc0:/PSP_GAME/SYSDIR/EBOOT.BIN");
 
@@ -303,6 +336,7 @@ bool Load_PSP_ISO(FileLoader *fileLoader, std::string *error_string) {
 
 	// If there's a game-specific config, load it.
 	g_Config.LoadGameConfig(id);
+	StvAplicarNucleoDelJuego();
 
 	System_PostUIMessage(UIMessage::CONFIG_LOADED);
 	INFO_LOG(Log::Loader, "Loading %s...", bootpath.c_str());
@@ -442,6 +476,7 @@ bool Load_PSP_ELF_PBP(FileLoader *fileLoader, std::string_view discId, std::stri
 	}
 
 	g_Config.LoadGameConfig(discID);
+	StvAplicarNucleoDelJuego();
 
 	return __KernelLoadExec(finalName.c_str(), 0, error_string);
 }
