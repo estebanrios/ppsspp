@@ -379,6 +379,7 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 	// STV_GE_THREAD_v1: puro estado (dls[], dlQueue, currentList) — candado y
 	// nada mas; la ejecucion la despacha el caller DESPUES de soltar esto.
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_ENCOLA);  // STV_MEDIDOR_ESPERAS_v1
+	stvge::TestigoDL testigoDL;   // zona de contabilidad de listas (ver StvGeThread.h)
 	*runList = false;
 
 	// TODO Check the stack values in missing arg and ajust the stack depth
@@ -770,6 +771,9 @@ inline void GPUCommon::UpdateState(GPURunState state) {
 
 // This is now called when coreState == CORE_RUNNING_GE, in addition to from the various sceGe commands.
 DLResult GPUCommon::ProcessDLQueue() {
+	// El worker recorre dlQueue y escribe dls[].state aca dentro: es la otra
+	// mitad de la zona que el testigo vigila.
+	stvge::TestigoDL testigoDL;
 	if (!resumingFromDebugBreak_) {
 		// STV_GE_THREAD_v1: en el worker CoreTiming es territorio ajeno (y su
 		// lectura seria una carrera contra el EmuThread): el startingTicks es

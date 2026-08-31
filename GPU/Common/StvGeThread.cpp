@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <deque>
 #include <vector>
+#include <chrono>
 #include <thread>
 
 #if defined(__ANDROID__)
@@ -433,6 +434,8 @@ static int CederDeTexto(const char *s) {
 }
 static int g_cederNivel = kCederDefecto;
 static uint32_t g_cederRevision = 0;
+static uint32_t g_dlRevision = 0;
+static uint32_t g_dlAnuncio = 0;
 static uint32_t g_cederAnuncio = 0;
 
 static int ResolverCeder() {
@@ -466,6 +469,36 @@ void CederEnFronteraDeLista() {
 	std::this_thread::yield();
 	g_lockPasada->lock();
 	g_cesiones.fetch_add(1, std::memory_order_relaxed);
+}
+
+
+// --- Testigo de exclusion: prueba de sensibilidad ----------------------------
+//
+// Un contador en cero no prueba nada si nunca comprobamos que sabe subir. Esto
+// lanza un hilo que entra a la zona protegida mientras el hilo que llama esta
+// adentro: si el testigo esta sano, la colision queda contada. Se dispara UNA
+// vez, con debug.stv.dl.probar=1, y se apaga sola.
+static std::atomic<bool> g_probandoDL{false};
+void ProbarTestigoDL() {
+	bool esperado = false;
+	if (!g_probandoDL.compare_exchange_strong(esperado, true))
+		return;
+	Emitir("STV: dl PROBANDO el testigo (se espera 1 colision)");
+	std::thread([]{
+		SetCurrentThreadName("StvProbaDL");
+		TestigoDL dentro;                       // entra el hilo de prueba
+		std::this_thread::sleep_for(std::chrono::milliseconds(150));
+	}).detach();
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	{
+		TestigoDL dentro;                       // y entra este, encima
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	}
+	char b[160];
+	snprintf(b, sizeof(b), "STV: dl prueba hecha: colisiones=%llu pico=%d",
+		(unsigned long long)g_colisionesDL.load(std::memory_order_relaxed),
+		g_picoDL.load(std::memory_order_relaxed));
+	Emitir(b);
 }
 
 static void CrearWorker() {
@@ -661,6 +694,24 @@ void PorVblank() {
 	// Releida cada vblank (a diferencia del contador de epi: aca la llamada ya
 	// es 1/cuadro, la prop cuesta ~nada y el A/B conmuta al toque).
 	const uint32_t vb = g_vblanksDeJuego.fetch_add(1, std::memory_order_relaxed) + 1;
+	if (++g_dlRevision >= kInvalFramesRevision) {
+		g_dlRevision = 0;
+#if defined(__ANDROID__)
+		char prop[PROP_VALUE_MAX] = { 0 };
+		if (__system_property_get("debug.stv.dl.probar", prop) > 0 && prop[0] == '1')
+			ProbarTestigoDL();
+#endif
+		if (++g_dlAnuncio >= kInvalAnuncioCada) {
+			g_dlAnuncio = 0;
+			char b[176];
+			snprintf(b, sizeof(b), "STV: dl entradas=%llu COLISIONES=%llu pico=%d dentro=%d",
+				(unsigned long long)g_entradasDL.load(std::memory_order_relaxed),
+				(unsigned long long)g_colisionesDL.load(std::memory_order_relaxed),
+				g_picoDL.load(std::memory_order_relaxed),
+				g_dentroDL.load(std::memory_order_relaxed));
+			Emitir(b);
+		}
+	}
 	if (++g_cederRevision >= kInvalFramesRevision) {
 		g_cederRevision = 0;
 		const int antesCeder = g_cederNivel;

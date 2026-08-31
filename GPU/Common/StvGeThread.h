@@ -129,6 +129,56 @@ private:
 
 // --- API del modulo (implementada en StvGeThread.cpp) ------------------------
 
+// --- TESTIGO DE EXCLUSION SOBRE LA CONTABILIDAD DE LISTAS --------------------
+//
+// PARA QUE: el arreglo del candado de las interrupciones cambia QUIEN serializa
+// el acceso a dls[]/dlQueue/ge_pending_cb. Si un sitio se escapa, el modo de
+// fallo no es ruidoso: es una carrera sobre estado compartido, o sea corrupcion
+// silenciosa. Este testigo la convierte en un NUMERO.
+//
+// COMO: cada hilo que entra a la zona protegida sube un contador atomico y lo
+// baja al salir. Ese contador DEBE valer 0 o 1. Si alguna vez vale 2, hubo dos
+// hilos adentro a la vez y queda contado — aunque esa carrera puntual no llegue
+// a romper nada visible.
+//
+// COMO SE VALIDA (y por que se construye ANTES del refactor):
+//   1. con el candado GRUESO actual tiene que dar CERO siempre  -> sin falsos
+//      positivos;
+//   2. inyectandole una colision a proposito tiene que GRITAR   -> sensible.
+//   Recien despues sirve para vigilar el cambio de verdad.
+//
+// COSTO: dos atomicas relaxed por entrada. A frecuencia de syscall es ruido.
+//
+// NO es un detector de carreras completo (dos hilos podrian intercalarse sin
+// solaparse dentro de la guarda). Es un detector de ENTRADA CONCURRENTE, que es
+// el fallo que nos importa: dos duenos del mismo estado al mismo tiempo.
+inline std::atomic<int> g_dentroDL{0};
+inline std::atomic<uint64_t> g_colisionesDL{0};
+inline std::atomic<uint64_t> g_entradasDL{0};
+inline std::atomic<int> g_picoDL{0};
+
+class TestigoDL {
+public:
+	TestigoDL() {
+		const int antes = g_dentroDL.fetch_add(1, std::memory_order_acq_rel);
+		g_entradasDL.fetch_add(1, std::memory_order_relaxed);
+		if (antes != 0) {
+			g_colisionesDL.fetch_add(1, std::memory_order_relaxed);
+			int pico = g_picoDL.load(std::memory_order_relaxed);
+			while (antes + 1 > pico &&
+			       !g_picoDL.compare_exchange_weak(pico, antes + 1, std::memory_order_relaxed)) {}
+		}
+	}
+	~TestigoDL() { g_dentroDL.fetch_sub(1, std::memory_order_acq_rel); }
+	TestigoDL(const TestigoDL &) = delete;
+	TestigoDL &operator=(const TestigoDL &) = delete;
+};
+
+// Colision a proposito, para comprobar que el testigo SABE gritar. La enciende
+// debug.stv.dl.probar=1 y hace que un hilo aparte entre a la zona mientras el
+// EmuThread esta adentro. Sin esto, un contador en cero no prueba nada.
+void ProbarTestigoDL();
+
 // --- Invalidaciones diferidas (valvula debug.stv.inval) ----------------------
 //
 // EL PROBLEMA MEDIDO (Spiderman 3, escena del incendio, medidor de esperas):
