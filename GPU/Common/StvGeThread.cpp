@@ -756,7 +756,9 @@ void PorVblank() {
 			const char *sChoque = g_choqueSitio.load(std::memory_order_relaxed);
 			const char *sDuenio = g_choqueDueñoSitio.load(std::memory_order_relaxed);
 			snprintf(b, sizeof(b),
-				"STV: dl fino=%d entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
+				"STV: dl intrEnd=%llu conGpu=%llu fino=%d entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
+				(unsigned long long)g_intrEndTotal.load(std::memory_order_relaxed),
+				(unsigned long long)g_intrEndConGpu.load(std::memory_order_relaxed),
 				g_dlFino,
 				(unsigned long long)g_entradasDL.load(std::memory_order_relaxed),
 				(unsigned long long)g_colisionesDL.load(std::memory_order_relaxed),

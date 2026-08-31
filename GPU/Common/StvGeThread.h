@@ -163,6 +163,13 @@ private:
 // mas que el rendimiento mejore.
 inline std::recursive_mutex g_muDL;
 
+// Cuantas veces InterruptEnd necesita DE VERDAD el candado grueso: solo cuando
+// la lista completo Y tenia contexto guardado (Restore + ReapplyGfxState). El
+// resto es contabilidad pura. La proporcion decide si vale la pena partir la
+// funcion en dos fases.
+inline std::atomic<uint64_t> g_intrEndTotal{0};
+inline std::atomic<uint64_t> g_intrEndConGpu{0};
+
 // (definida en StvGeThread.cpp: NO va inline, o el simbolo no se emite)
 bool DLFinoActivo();
 

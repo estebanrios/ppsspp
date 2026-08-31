@@ -1637,9 +1637,14 @@ void GPUCommon::InterruptEnd(int listid) {
 
 	DisplayList &dl = dls[listid];
 	dl.pendingInterrupt = false;
-	// TODO: Unless the signal handler could change it?
+	// STV: contar las DOS ramas. El candado grueso aca hace falta SOLO por el
+	// Restore + ReapplyGfxState (estado de GPU). Si esa rama fuera rara, el
+	// camino comun podria evitar el grueso y recuperar los 3,2 ms. Cuanto de
+	// raro es, se mide.
+	stvge::g_intrEndTotal.fetch_add(1, std::memory_order_relaxed);
 	if (dl.state == PSP_GE_DL_STATE_COMPLETED || dl.state == PSP_GE_DL_STATE_NONE) {
 		if (dl.started && dl.context.IsValid()) {
+			stvge::g_intrEndConGpu.fetch_add(1, std::memory_order_relaxed);
 			gstate.Restore(dl.context);
 			ReapplyGfxState();
 		}
