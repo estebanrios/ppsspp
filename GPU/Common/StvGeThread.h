@@ -112,6 +112,28 @@ private:
 
 // --- API del modulo (implementada en StvGeThread.cpp) ------------------------
 
+// --- Invalidaciones diferidas (valvula debug.stv.inval) ----------------------
+//
+// EL PROBLEMA MEDIDO (Spiderman 3, escena del incendio, medidor de esperas):
+// con el worker encendido el EmuThread pasa 8,0-8,9 ms POR CUADRO parado en
+// cand_invalidate, con 56-61 tomas por cuadro. Es InvalidateCache pidiendo
+// g_mu mientras el worker lo retiene de punta a punta de su pasada (los 8,62 ms
+// de "DL processing time" que reporta el propio emulador). El worker saca 8,62
+// ms de trabajo del EmuThread y le devuelve 8,9 ms de espera: por eso en ese
+// juego el worker RESTA (35 VPS con worker vs 44,7 sin el).
+//
+// LA OBSERVACION QUE LO DESTRABA: hoy, cuando el EmuThread se topa con el
+// candado tomado por una pasada, se queda esperando y su invalidacion se
+// aplica IGUAL despues de la pasada. O sea que encolarla para que el worker la
+// aplique al terminar produce EXACTAMENTE EL MISMO ORDEN — lo unico que cambia
+// es que el EmuThread no se queda parado. No es una relajacion de la
+// semantica: es la misma secuencia sin la parada.
+//
+// Devuelve true si quedo encolada (el llamador no hace nada mas) y false si hay
+// que hacerla ahi mismo (worker apagado, candado libre, cola llena o valvula
+// en 0). Con la valvula en 0 devuelve false SIEMPRE: upstream exacto.
+bool DiferirInvalidacion(uint32_t addr, int size, int type);
+
 // Identidad de hilo: true SOLO en el worker. Es lo que consulta el choke point
 // de __GeTriggerSync/__GeTriggerInterrupt en sceGe.cpp para decidir si postear.
 bool EnWorker();

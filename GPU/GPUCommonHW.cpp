@@ -792,6 +792,14 @@ void GPUCommonHW::CheckDepthUsage(VirtualFramebuffer *vfb) {
 void GPUCommonHW::InvalidateCache(u32 addr, int size, GPUInvalidationType type) {
 	// STV_GE_THREAD_v1: sceKernelDcache*/sceIo invalidan la cache de texturas
 	// desde el EmuThread; el worker la recorre en cada SetTexture.
+	//
+	// Este es EL sitio de contencion medido: 56-61 tomas por cuadro y hasta
+	// 8,9 ms de espera acumulada, porque el worker retiene g_mu toda su pasada.
+	// Con la valvula debug.stv.inval encendida, cuando el candado esta tomado
+	// por una pasada la invalidacion se ENCOLA y la aplica el propio worker al
+	// terminar — mismo orden que el camino bloqueante, sin la parada.
+	if (stvge::DiferirInvalidacion(addr, size, (int)type))
+		return;
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_INVALIDATE);
 	if (size > 0)
 		textureCache_->Invalidate(addr, size, type);

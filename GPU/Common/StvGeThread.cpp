@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <vector>
 #include <thread>
 
 #if defined(__ANDROID__)
@@ -221,6 +222,10 @@ static void AfinidadCluster(bool soloGrandes) {
 
 // --- El worker ---------------------------------------------------------------
 
+// Declarada aca porque la pasada del worker (mas abajo) la usa antes de su
+// definicion, que vive junto al resto del mecanismo de diferido.
+static void DrenarInvalidaciones();
+
 static void WorkerMain() {
 	SetCurrentThreadName("STVGeWorker");
 	tl_enWorker = true;
@@ -262,6 +267,11 @@ static void WorkerMain() {
 			// cuando hay debugger/recorder activo (StvGeExigeInline).
 			_dbg_assert_(r != DLResult::DebugBreak);
 			(void)r;
+			// Con g_mu TODAVIA tomado: aplicar lo que el EmuThread encolo
+			// mientras esta pasada corria. El orden resultante es el mismo que
+			// tenia el camino bloqueante (la invalidacion caia despues de la
+			// pasada), sin la parada del EmuThread.
+			DrenarInvalidaciones();
 		}
 		g_pasadas.fetch_add(1, std::memory_order_relaxed);
 
@@ -270,6 +280,99 @@ static void WorkerMain() {
 		if (!g_ordenPendiente)
 			g_cvIdle.notify_all();
 	}
+}
+
+
+// --- Invalidaciones diferidas ------------------------------------------------
+//
+// Ver el porque en StvGeThread.h. Aca solo el mecanismo.
+//
+// ORDEN DE CANDADOS: g_muInval es SIEMPRE el mas interno. El worker lo toma
+// teniendo g_mu (para drenar); el EmuThread lo toma justo DESPUES de fallar en
+// conseguir g_mu, o sea sin tenerlo. No hay ciclo posible.
+struct InvalPend { uint32_t addr; int size; int type; };
+static std::mutex g_muInval;
+static std::vector<InvalPend> g_invalPend;
+// Tope: si la cola se llena (el worker no llega a drenar), NO se pierde una
+// invalidacion — se cae al camino bloqueante de siempre. Perder una es
+// corrupcion de texturas; esperar es solo lento.
+inline constexpr size_t kMaxInval = 512;
+static std::atomic<uint64_t> g_invalDiferidas{0};
+static std::atomic<size_t> g_invalCuenta{0};   // espejo barato de g_invalPend.size()
+static std::atomic<uint64_t> g_invalDirectas{0};
+
+// Valvula: 1 = diferir, 0 = upstream exacto (DEFAULT). Misma regla del typo que
+// el resto: un caracter no-digito vale el default, no cero.
+inline constexpr int kInvalDefecto = 0;
+static int InvalDeTexto(const char *s) {
+	if (!s || !*s) return kInvalDefecto;
+	if (*s < '0' || *s > '9') return kInvalDefecto;
+	return (*s - '0') ? 1 : 0;
+}
+static int g_invalNivel = kInvalDefecto;
+static uint32_t g_invalRevision = 0;
+static uint32_t g_invalAnuncio = 0;
+inline constexpr uint32_t kInvalAnuncioCada = 10;   // 10 * 32 cuadros ~ 5 s
+inline constexpr uint32_t kInvalFramesRevision = 32;
+
+static int ResolverInval() {
+	const char *e = getenv("STV_GE_INVAL");
+	if (e && *e)
+		return InvalDeTexto(e);
+#if defined(__ANDROID__)
+	char prop[PROP_VALUE_MAX] = { 0 };
+	if (__system_property_get("debug.stv.inval", prop) > 0 && prop[0])
+		return InvalDeTexto(prop);
+#endif
+	return kInvalDefecto;
+}
+
+bool DiferirInvalidacion(uint32_t addr, int size, int type) {
+	if (g_invalNivel == 0 || NivelActivo() == 0)
+		return false;
+	// Solo vale la pena diferir si el que retiene el candado es una PASADA del
+	// worker: es la unica que lo tiene milisegundos. Cualquier otro tenedor lo
+	// suelta enseguida, y ahi bloquear sale mas barato que encolar.
+	{
+		std::lock_guard<std::mutex> lk(g_muCola);
+		if (!g_corriendo)
+			return false;
+	}
+	// try_lock sobre el recursivo: si este mismo hilo YA lo tiene (el worker
+	// drenando, o una entrada anidada), devuelve exito y hacemos el camino
+	// normal — que es lo correcto, no hay a quien esperar.
+	if (g_mu.try_lock()) {
+		g_mu.unlock();
+		g_invalDirectas.fetch_add(1, std::memory_order_relaxed);
+		return false;
+	}
+	{
+		std::lock_guard<std::mutex> lk(g_muInval);
+		if (g_invalPend.size() >= kMaxInval)
+			return false;
+		g_invalPend.push_back({ addr, size, type });
+		g_invalCuenta.store(g_invalPend.size(), std::memory_order_relaxed);
+	}
+	g_invalDiferidas.fetch_add(1, std::memory_order_relaxed);
+	return true;
+}
+
+// La llama el worker al TERMINAR la pasada, TODAVIA con g_mu tomado. Reentra
+// por gpu->InvalidateCache, y ahi DiferirInvalidacion devuelve false (try_lock
+// tiene exito: es el mismo hilo), asi que se aplican por el camino normal.
+static void DrenarInvalidaciones() {
+	std::vector<InvalPend> lote;
+	{
+		std::lock_guard<std::mutex> lk(g_muInval);
+		if (g_invalPend.empty())
+			return;
+		lote.swap(g_invalPend);
+		g_invalCuenta.store(0, std::memory_order_relaxed);
+	}
+	if (!gpu)
+		return;
+	for (const InvalPend &i : lote)
+		gpu->InvalidateCache(i.addr, i.size, (GPUInvalidationType)i.type);
 }
 
 static void CrearWorker() {
@@ -436,7 +539,26 @@ static void EmitirEstado(const char *encabezado, int nivel) {
 	Emitir(b);
 }
 
+
+// RED DE SEGURIDAD. El worker drena al final de CADA pasada, asi que solo puede
+// quedar algo encolado si el EmuThread encolo despues del ultimo drenaje y el
+// worker ya no volvio a correr (por ejemplo porque se apago la palanca). En ese
+// caso el worker esta idle, g_mu esta libre, y este drenaje es instantaneo.
+// Sin esto, apagar el worker con la cola cargada dejaria texturas rancias.
+static void DrenarInvalidacionesSiQuedaron() {
+	if (g_invalCuenta.load(std::memory_order_relaxed) == 0)
+		return;
+	{
+		std::lock_guard<std::mutex> lk(g_muCola);
+		if (g_corriendo || g_ordenPendiente)
+			return;   // el worker las va a drenar el solo al terminar
+	}
+	std::lock_guard<std::recursive_mutex> ge(g_mu);
+	DrenarInvalidaciones();
+}
+
 void PorVblank() {
+	DrenarInvalidacionesSiQuedaron();
 	// Drenaje por cuadro: el respaldo de 60/s aunque el mainloop no haya
 	// pisado el hook de Advance (no deberia pasar, pero un silencio no es un
 	// dato: este drenaje es incondicional si hay trabajo).
@@ -446,6 +568,38 @@ void PorVblank() {
 	// Releida cada vblank (a diferencia del contador de epi: aca la llamada ya
 	// es 1/cuadro, la prop cuesta ~nada y el A/B conmuta al toque).
 	const uint32_t vb = g_vblanksDeJuego.fetch_add(1, std::memory_order_relaxed) + 1;
+	if (++g_invalRevision >= kInvalFramesRevision) {
+		g_invalRevision = 0;
+		const int antesInval = g_invalNivel;
+		g_invalNivel = ResolverInval();
+		// TESTIGO. Regla del instrumento mudo: la valvula habla en los DOS
+		// estados. Si no aparece ninguna de estas lineas, la lib NO lleva el
+		// parche — que es distinto de "la valvula esta en 0".
+		if (g_invalNivel != antesInval) {
+			char b[160];
+			snprintf(b, sizeof(b), "STV: inval diferido %s (debug.stv.inval)",
+				g_invalNivel ? "ENCENDIDO" : "apagado");
+			Emitir(b);
+		}
+		if (++g_invalAnuncio >= kInvalAnuncioCada) {
+			g_invalAnuncio = 0;
+			size_t pend;
+			{
+				// .size() sobre el vector mientras otro hilo puede estar
+				// insertando es una carrera de verdad, no un dato aproximado.
+				std::lock_guard<std::mutex> lk(g_muInval);
+				pend = g_invalPend.size();
+			}
+			char b[192];
+			snprintf(b, sizeof(b),
+				"STV: inval nivel=%d diferidas=%llu directas=%llu pendientes=%zu",
+				g_invalNivel,
+				(unsigned long long)g_invalDiferidas.load(std::memory_order_relaxed),
+				(unsigned long long)g_invalDirectas.load(std::memory_order_relaxed),
+				pend);
+			Emitir(b);
+		}
+	}
 	int deseado = ResolverNivel();
 	// E1 solo cubre los backends HW (los candados viven en GPUCommon/HW y en
 	// EmuScreen); con el renderer por software el worker queda deshabilitado
