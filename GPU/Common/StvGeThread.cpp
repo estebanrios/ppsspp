@@ -513,7 +513,21 @@ void ProbarTestigoDL() {
 // aunque la valvula este apagada.
 static int g_dlFino = 0;
 static uint32_t g_dlFinoRevision = 0;
-bool DLFinoActivo() { return g_dlFino != 0; }
+
+// DESACTIVADA A LA FUERZA (2026-08-31). El diseño esta REFUTADO y encenderla
+// CUELGA la consola: los tres hilos quedan en futex y el proceso vivo pero
+// congelado. La razon no es un descuido de candados sino la estructura del
+// codigo: GeIntrHandler llama a InterruptEnd, y esa funcion hace
+// gstate.Restore(dl.context) + ReapplyGfxState() — o sea ESTADO DE GPU, no
+// contabilidad de listas. Por eso necesita el candado grueso de verdad, y si el
+// manejador ya tiene el fino tomado se arma el ciclo fino->grueso contra el
+// grueso->fino del worker.
+//
+// La premisa era cierta para run() y FALSA para el camino completo. Se deja el
+// codigo (los 24 sitios protegidos + el testigo) porque no cuesta nada y sirve
+// de base cuando se saque el Restore del camino de la interrupcion, que es el
+// arreglo de fondo. Pero la valvula NO puede quedar como gatillo en una imagen.
+bool DLFinoActivo() { return false; }
 
 static int ResolverDLFino() {
 	const char *e = getenv("STV_GE_DLFINO");
@@ -725,7 +739,7 @@ void PorVblank() {
 		g_dlFino = ResolverDLFino();
 		if (g_dlFino != antes) {
 			char b[144];
-			snprintf(b, sizeof(b), "STV: dlfino %s (debug.stv.dlfino)", g_dlFino ? "ENCENDIDO" : "apagado");
+			snprintf(b, sizeof(b), "STV: dlfino pedido=%d pero CLAVADO en 0 (diseño refutado: cuelga)", g_dlFino);
 			Emitir(b);
 		}
 	}
