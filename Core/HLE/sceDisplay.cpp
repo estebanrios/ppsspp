@@ -46,6 +46,7 @@
 #include "Core/HLE/ErrorCodes.h"
 #include "Core/HLE/FunctionWrappers.h"
 #include "Core/HLE/sceDisplay.h"
+#include "Core/MIPS/StvDestinoSalto.h"
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceNet.h"
 #include "Core/HLE/sceKernelThread.h"
@@ -592,6 +593,12 @@ void hleEnterVblank(u64 userdata, int cyclesLate) {
 				extern void StvVolcarContadores();
 				StvVolcarContadores();
 			}
+			// Testigo de la cache de destinos del despachador: sin un latido
+			// periodico solo se volcaria al limpiar el bloque de codigo, que
+			// pasa casi nunca. Una tasa de aciertos que no se puede leer no
+			// sirve para decidir el tamaño de la tabla.
+			if (stvjit::ModoCache() >= 2)
+				stvjit::VolcarTestigo("1s");
 #endif
 		}
 	}

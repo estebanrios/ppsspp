@@ -5,6 +5,17 @@
 
 #include "Common/Log.h"
 
+// INFO_LOG(Log::JIT, ...) NO llega a logcat en este aparato: ese canal esta
+// filtrado. El testigo que no se puede leer no es un testigo. Se usa la misma
+// via directa que ya usa la traza STVJIT de Arm64IRAsm.cpp.
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define STV_LOG(...) __android_log_print(ANDROID_LOG_INFO, "STV", __VA_ARGS__)
+#else
+#include <cstdio>
+#define STV_LOG(...) do { printf(__VA_ARGS__); printf("\n"); } while (0)
+#endif
+
 #ifdef __ANDROID__
 #include <sys/system_properties.h>
 #endif
@@ -36,7 +47,7 @@ static void LeerValvula() {
 	}
 #endif
 	OlvidarTodos();
-	INFO_LOG(Log::JIT, "STVDESTINO: modo=%d bits=%d (%d entradas, %d KB)",
+	STV_LOG("STVDESTINO: modo=%d bits=%d (%d entradas, %d KB)",
 		s_modo, s_bits, 1 << s_bits, (int)((1 << s_bits) * sizeof(EntradaDestino) / 1024));
 }
 
@@ -62,9 +73,18 @@ void VolcarTestigo(const char *motivo) {
 	uint64_t t = g_aciertos + g_fallos;
 	if (!t)
 		return;
-	INFO_LOG(Log::JIT, "STVDESTINO[%s]: aciertos=%llu fallos=%llu  tasa=%.2f %%",
-		motivo, (unsigned long long)g_aciertos, (unsigned long long)g_fallos,
-		100.0 * (double)g_aciertos / (double)t);
+	// El acumulado solo dice el promedio desde que arranco, y el arranque es
+	// justo el tramo con la tabla fria: aplasta la tasa de regimen. Se informa
+	// tambien el TRAMO desde el ultimo volcado, que es lo que hay que mirar.
+	static uint64_t ultA, ultF;
+	uint64_t dA = g_aciertos - ultA, dF = g_fallos - ultF;
+	ultA = g_aciertos; ultF = g_fallos;
+	uint64_t dt = dA + dF;
+	STV_LOG("STVDESTINO[%s]: tramo %.2f %% (%llu saltos)  acumulado %.2f %% (aciertos=%llu fallos=%llu)",
+		motivo,
+		dt ? 100.0 * (double)dA / (double)dt : 0.0, (unsigned long long)dt,
+		100.0 * (double)g_aciertos / (double)t,
+		(unsigned long long)g_aciertos, (unsigned long long)g_fallos);
 }
 
 }  // namespace stvjit
