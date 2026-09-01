@@ -596,7 +596,7 @@ std::string GetJavaString(JNIEnv *env, jstring jstr) {
 	return cpp_string;
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_PpssppActivity_registerCallbacks(JNIEnv *env, jobject obj) {
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_PpssppActivity_registerCallbacks(JNIEnv *env, jobject obj) {
 	ppssppActivity = env->NewGlobalRef(obj);
 	TextDrawerAndroid::SetActivity(ppssppActivity);
 	postCommand = env->GetMethodID(env->GetObjectClass(obj), "postCommand", "(Ljava/lang/String;Ljava/lang/String;)V");
@@ -611,7 +611,7 @@ extern "C" void Java_org_ppsspp_ppsspp_PpssppActivity_registerCallbacks(JNIEnv *
 	Android_StorageSetActivity(ppssppActivity);
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_PpssppActivity_unregisterCallbacks(JNIEnv *env, jobject obj) {
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_PpssppActivity_unregisterCallbacks(JNIEnv *env, jobject obj) {
 	Android_StorageSetActivity(nullptr);
 	env->DeleteGlobalRef(ppssppActivity);
 	ppssppActivity = nullptr;
@@ -619,7 +619,7 @@ extern "C" void Java_org_ppsspp_ppsspp_PpssppActivity_unregisterCallbacks(JNIEnv
 
 // This is now only used as a trigger for GetAppInfo as a function to all before Init.
 // On Android we don't use any of the values it returns.
-extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_isLandscape(JNIEnv *env, jclass) {
+extern "C" __attribute__((visibility("default"))) jboolean Java_org_ppsspp_ppsspp_NativeApp_isLandscape(JNIEnv *env, jclass) {
 	std::string app_name, app_nice_name, version;
 	bool landscape;
 	NativeGetAppInfo(&app_name, &app_nice_name, &landscape, &version);
@@ -627,11 +627,11 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_isLandscape(JNIEnv *env, jc
 }
 
 // Allow the app to intercept the back button.
-extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_isAtTopLevel(JNIEnv *env, jclass) {
+extern "C" __attribute__((visibility("default"))) jboolean Java_org_ppsspp_ppsspp_NativeApp_isAtTopLevel(JNIEnv *env, jclass) {
 	return NativeIsAtTopLevel();
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_audioConfig
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_audioConfig
 	(JNIEnv *env, jclass, jint optimalFPB, jint optimalSR) {
 	optimalFramesPerBuffer = optimalFPB;
 	optimalSampleRate = optimalSR;
@@ -661,7 +661,7 @@ static std::string QueryConfig(std::string_view query) {
 	}
 }
 
-extern "C" jstring Java_org_ppsspp_ppsspp_NativeApp_queryConfig
+extern "C" __attribute__((visibility("default"))) jstring Java_org_ppsspp_ppsspp_NativeApp_queryConfig
 	(JNIEnv *env, jclass, jstring jquery) {
 	std::string query = GetJavaString(env, jquery);
 	std::string result = QueryConfig(query);
@@ -732,7 +732,7 @@ static void parse_args(std::vector<std::string> &args, const std::string value) 
 
 static bool bFirstResume = false;
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_init
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_init
 (JNIEnv * env, jclass, jstring jmodel, jint jdeviceType, jstring jlangRegion, jstring japkpath,
 	jstring jdataDir, jstring jexternalStorageDir, jstring jexternalFilesDir, jstring jNativeLibDir,
 	jstring jadditionalStorageDirs, jstring jcacheDir, jstring jshortcutParam, jstring jInstallerName,
@@ -875,7 +875,7 @@ AudioBackend *System_CreateAudioBackend() {
 	return nullptr;
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_audioInit(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_audioInit(JNIEnv *, jclass) {
 	sampleRate = optimalSampleRate;
 	if (optimalSampleRate == 0) {
 		sampleRate = 44100;
@@ -901,7 +901,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_audioInit(JNIEnv *, jclass) {
 	}
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_audioShutdown(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_audioShutdown(JNIEnv *, jclass) {
 	if (g_audioState) {
 		AndroidAudio_Shutdown(g_audioState);
 		g_audioState = nullptr;
@@ -910,15 +910,15 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_audioShutdown(JNIEnv *, jclass)
 	}
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_audioRecording_1SetSampleRate(JNIEnv *, jclass, jint sampleRate) {
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_audioRecording_1SetSampleRate(JNIEnv *, jclass, jint sampleRate) {
 	AndroidAudio_Recording_SetSampleRate(g_audioState, sampleRate);
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_audioRecording_1Start(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_audioRecording_1Start(JNIEnv *, jclass) {
 	AndroidAudio_Recording_Start(g_audioState);
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_audioRecording_1Stop(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_audioRecording_1Stop(JNIEnv *, jclass) {
 	AndroidAudio_Recording_Stop(g_audioState);
 }
 
@@ -930,7 +930,7 @@ bool System_AudioRecordingState() {
 	return AndroidAudio_Recording_State(g_audioState);
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_resume(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_resume(JNIEnv *, jclass) {
 	INFO_LOG(Log::System, "NativeApp.resume() - begin");
 	AndroidAudio_Resume(g_audioState);
 
@@ -940,7 +940,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_resume(JNIEnv *, jclass) {
 	INFO_LOG(Log::System, "NativeApp.resume() - end");
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_pause(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_pause(JNIEnv *, jclass) {
 	INFO_LOG(Log::System, "NativeApp.pause() - begin");
 	AndroidAudio_Pause(g_audioState);
 	// STV: guardar la config AQUI, al perder el foco.
@@ -971,7 +971,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_pause(JNIEnv *, jclass) {
 	INFO_LOG(Log::System, "NativeApp.pause() - end");
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_shutdown(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_shutdown(JNIEnv *, jclass) {
 	INFO_LOG(Log::System, "NativeApp.shutdown() -- begin");
 
 	if (renderer_inited && useCPUThread && graphicsContext) {
@@ -1026,7 +1026,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_shutdown(JNIEnv *, jclass) {
 
 // JavaEGL. This doesn't get called on the Vulkan path.
 // This gets called from onSurfaceCreated.
-extern "C" jboolean Java_org_ppsspp_ppsspp_NativeRenderer_displayInit(JNIEnv * env, jobject obj) {
+extern "C" __attribute__((visibility("default"))) jboolean Java_org_ppsspp_ppsspp_NativeRenderer_displayInit(JNIEnv * env, jobject obj) {
 	_assert_(useCPUThread);
 
 	INFO_LOG(Log::G3D, "NativeApp.displayInit()");
@@ -1092,7 +1092,7 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeRenderer_displayInit(JNIEnv * e
 	return true;
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_backbufferResize(JNIEnv *, jclass, jint pixel_xres, jint pixel_yres, jint format) {
+extern "C" __attribute__((visibility("default"))) void JNICALL Java_org_ppsspp_ppsspp_NativeApp_backbufferResize(JNIEnv *, jclass, jint pixel_xres, jint pixel_yres, jint format) {
 	INFO_LOG(Log::System, "NativeApp.backbufferResize(%d x %d)", pixel_xres, pixel_yres);
 
 	int old_w = g_display.pixel_xres;
@@ -1218,7 +1218,7 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 	}
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendRequestResult(JNIEnv *env, jclass, jint jrequestID, jboolean result, jstring jvalue, jint jintValue) {
+extern "C" __attribute__((visibility("default"))) void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendRequestResult(JNIEnv *env, jclass, jint jrequestID, jboolean result, jstring jvalue, jint jintValue) {
 	std::string value = jvalue ? GetJavaString(env, jvalue) : "(no value)";
 	INFO_LOG(Log::System, "Received result of request %d from Java: %d: %d '%s'", jrequestID, (int)result, jintValue, value.c_str());
 	if (result) {
@@ -1228,7 +1228,7 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendRequestResult(JNIEn
 	}
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeRenderer_displayRender(JNIEnv *env, jobject obj) {
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeRenderer_displayRender(JNIEnv *env, jobject obj) {
 	// This doesn't get called on the Vulkan path.
 	_assert_(useCPUThread);
 
@@ -1268,7 +1268,7 @@ PermissionStatus System_GetPermissionStatus(SystemPermission permission) {
 	}
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_touch
+extern "C" __attribute__((visibility("default"))) void JNICALL Java_org_ppsspp_ppsspp_NativeApp_touch
 	(JNIEnv *, jclass, float x, float y, int code, int pointerId) {
 	if (!renderer_inited)
 		return;
@@ -1280,7 +1280,7 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_touch
 	NativeTouch(touch);
 }
 
-extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyDown(JNIEnv *, jclass, jint deviceId, jint key, jboolean isRepeat) {
+extern "C" __attribute__((visibility("default"))) jboolean Java_org_ppsspp_ppsspp_NativeApp_keyDown(JNIEnv *, jclass, jint deviceId, jint key, jboolean isRepeat) {
 	if (!renderer_inited) {
 		return false; // could probably return true here too..
 	}
@@ -1299,7 +1299,7 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyDown(JNIEnv *, jclass, j
 	return NativeKey(keyInput);
 }
 
-extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyUp(JNIEnv *, jclass, jint deviceId, jint key) {
+extern "C" __attribute__((visibility("default"))) jboolean Java_org_ppsspp_ppsspp_NativeApp_keyUp(JNIEnv *, jclass, jint deviceId, jint key) {
 	if (!renderer_inited) {
 		return false; // could probably return true here too..
 	}
@@ -1315,7 +1315,7 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyUp(JNIEnv *, jclass, jin
 	return NativeKey(keyInput);
 }
 
-extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyChar(JNIEnv *, jclass, jint deviceId, jint unicodeChar) {
+extern "C" __attribute__((visibility("default"))) jboolean Java_org_ppsspp_ppsspp_NativeApp_keyChar(JNIEnv *, jclass, jint deviceId, jint unicodeChar) {
 	if (!renderer_inited) {
 		return false; // could probably return true here too..
 	}
@@ -1327,7 +1327,7 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyChar(JNIEnv *, jclass, j
 	return NativeKey(keyInput);
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_joystickAxis(
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_joystickAxis(
 		JNIEnv *env, jclass, jint deviceId, jintArray axisIds, jfloatArray values, jint count) {
 	if (!renderer_inited)
 		return;
@@ -1350,7 +1350,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_joystickAxis(
 	env->ReleaseFloatArrayElements(values, valueBuffer, JNI_ABORT);  // ABORT just means we don't want changes copied back!
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_mouse(
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_mouse(
 	JNIEnv *env, jclass, jfloat x, jfloat y, int button, int action) {
 	if (!renderer_inited)
 		return;
@@ -1413,7 +1413,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_mouse(
 	}
 }
 
-extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_mouseWheelEvent(
+extern "C" __attribute__((visibility("default"))) jboolean Java_org_ppsspp_ppsspp_NativeApp_mouseWheelEvent(
 	JNIEnv *env, jclass, jfloat x, jfloat y) {
 	if (!renderer_inited)
 		return false;
@@ -1437,20 +1437,20 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_mouseWheelEvent(
 	return true;
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeApp_mouseDelta(
+extern "C" __attribute__((visibility("default"))) void Java_org_ppsspp_ppsspp_NativeApp_mouseDelta(
 	JNIEnv * env, jclass, jfloat x, jfloat y) {
 	if (!renderer_inited)
 		return;
 	NativeMouseDelta(x, y);
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_accelerometer(JNIEnv *, jclass, float x, float y, float z) {
+extern "C" __attribute__((visibility("default"))) void JNICALL Java_org_ppsspp_ppsspp_NativeApp_accelerometer(JNIEnv *, jclass, float x, float y, float z) {
 	if (!renderer_inited)
 		return;
 	NativeAccelerometer(x, y, z);
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessageFromJava(JNIEnv *env, jclass, jstring jmessage, jstring jparam) {
+extern "C" __attribute__((visibility("default"))) void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessageFromJava(JNIEnv *env, jclass, jstring jmessage, jstring jparam) {
 	std::string msg = GetJavaString(env, jmessage);
 	std::string prm = GetJavaString(env, jparam);
 
@@ -1578,7 +1578,7 @@ void getDesiredBackbufferSize(int &sz_x, int &sz_y) {
 	}
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setDisplayParameters(JNIEnv *, jclass, jint xres, jint yres, jint dpi, jfloat refreshRate) {
+extern "C" __attribute__((visibility("default"))) void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setDisplayParameters(JNIEnv *, jclass, jint xres, jint yres, jint dpi, jfloat refreshRate) {
 	INFO_LOG(Log::G3D, "NativeApp.setDisplayParameters(%d x %d, dpi=%d, refresh=%0.2f)", xres, yres, dpi, refreshRate);
 
 	if (IsVREnabled()) {
@@ -1596,19 +1596,19 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setDisplayParameters(JN
 	g_display.display_hz = refreshRate;
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_computeDesiredBackbufferDimensions(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) void JNICALL Java_org_ppsspp_ppsspp_NativeApp_computeDesiredBackbufferDimensions(JNIEnv *, jclass) {
 	getDesiredBackbufferSize(desiredBackbufferSizeX, desiredBackbufferSizeY);
 }
 
-extern "C" jint JNICALL Java_org_ppsspp_ppsspp_NativeApp_getDesiredBackbufferWidth(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) jint JNICALL Java_org_ppsspp_ppsspp_NativeApp_getDesiredBackbufferWidth(JNIEnv *, jclass) {
 	return desiredBackbufferSizeX;
 }
 
-extern "C" jint JNICALL Java_org_ppsspp_ppsspp_NativeApp_getDesiredBackbufferHeight(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) jint JNICALL Java_org_ppsspp_ppsspp_NativeApp_getDesiredBackbufferHeight(JNIEnv *, jclass) {
 	return desiredBackbufferSizeY;
 }
 
-extern "C" jint JNICALL Java_org_ppsspp_ppsspp_NativeApp_getDisplayFramerateMode(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) jint JNICALL Java_org_ppsspp_ppsspp_NativeApp_getDisplayFramerateMode(JNIEnv *, jclass) {
 	return g_Config.iDisplayFramerateMode;
 }
 
@@ -1637,23 +1637,23 @@ std::vector<std::string> System_GetCameraDeviceList() {
 	return deviceListVector;
 }
 
-extern "C" jint Java_org_ppsspp_ppsspp_NativeApp_getSelectedCamera(JNIEnv *, jclass) {
+extern "C" __attribute__((visibility("default"))) jint Java_org_ppsspp_ppsspp_NativeApp_getSelectedCamera(JNIEnv *, jclass) {
 	int cameraId = 0;
 	sscanf(g_Config.sCameraDevice.c_str(), "%d:", &cameraId);
 	return cameraId;
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setGpsDataAndroid(JNIEnv *, jclass,
+extern "C" __attribute__((visibility("default"))) void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setGpsDataAndroid(JNIEnv *, jclass,
        jlong time, jfloat hdop, jfloat latitude, jfloat longitude, jfloat altitude, jfloat speed, jfloat bearing) {
 	GPS::setGpsData(time, hdop, latitude, longitude, altitude, speed, bearing);
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setSatInfoAndroid(JNIEnv *, jclass,
+extern "C" __attribute__((visibility("default"))) void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setSatInfoAndroid(JNIEnv *, jclass,
 	   jshort index, jshort id, jshort elevation, jshort azimuth, jshort snr, jshort good) {
 	GPS::setSatInfo(index, id, elevation, azimuth, snr, good);
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_pushCameraImageAndroid(JNIEnv *env, jclass, jbyteArray image) {
+extern "C" __attribute__((visibility("default"))) void JNICALL Java_org_ppsspp_ppsspp_NativeApp_pushCameraImageAndroid(JNIEnv *env, jclass, jbyteArray image) {
 	if (image) {
 		jlong size = env->GetArrayLength(image);
 		jbyte* buffer = env->GetByteArrayElements(image, nullptr);
@@ -1685,7 +1685,7 @@ static void VulkanEmuThread(ANativeWindow *wnd);
 
 // This runs in Vulkan mode only.
 // This handles the entire lifecycle of the Vulkan context, init and exit.
-extern "C" jboolean JNICALL Java_org_ppsspp_ppsspp_PpssppActivity_runVulkanRenderLoop(JNIEnv * env, jobject obj, jobject _surf) {
+extern "C" __attribute__((visibility("default"))) jboolean JNICALL Java_org_ppsspp_ppsspp_PpssppActivity_runVulkanRenderLoop(JNIEnv * env, jobject obj, jobject _surf) {
 	_assert_(!useCPUThread);
 
 	if (!graphicsContext) {
@@ -1711,7 +1711,7 @@ extern "C" jboolean JNICALL Java_org_ppsspp_ppsspp_PpssppActivity_runVulkanRende
 	return true;
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_PpssppActivity_requestExitVulkanRenderLoop(JNIEnv * env, jobject obj) {
+extern "C" __attribute__((visibility("default"))) void JNICALL Java_org_ppsspp_ppsspp_PpssppActivity_requestExitVulkanRenderLoop(JNIEnv * env, jobject obj) {
 	if (!renderLoopRunning) {
 		ERROR_LOG(Log::System, "Render loop already exited");
 		return;
@@ -1803,7 +1803,7 @@ static void VulkanEmuThread(ANativeWindow *wnd) {
 	WARN_LOG(Log::G3D, "Render loop function exited.");
 }
 
-extern "C" JNIEXPORT jobjectArray JNICALL
+extern "C" __attribute__((visibility("default"))) JNIEXPORT jobjectArray JNICALL
 Java_org_ppsspp_ppsspp_ShortcutActivity_queryGameInfo(JNIEnv * env, jclass, jobject activity, jstring jpath) {
 
 	jobject activityRef = nullptr;
