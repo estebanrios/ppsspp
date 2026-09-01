@@ -31,6 +31,8 @@
 #include "Core/MemMapHelpers.h"
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
+#include <optional>
+
 #include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 #include "GPU/Common/TextureCacheCommon.h"
 #include "GPU/Common/SoftwareTransformCommon.h"
@@ -1651,10 +1653,13 @@ void GPUCommon::InterruptEnd(int listid) {
 		const bool completada = (d.state == PSP_GE_DL_STATE_COMPLETED || d.state == PSP_GE_DL_STATE_NONE);
 		necesitaGrueso = completada && ((d.started && d.context.IsValid()) || !dlQueue.empty());
 	}
+	std::optional<stvge::RastreoCandado> rastroVivo;
 	std::unique_lock<std::recursive_mutex> candadoGe(stvge::g_mu, std::defer_lock);
 	if (necesitaGrueso && stvge::NivelActivo() != 0) {
+		stvge::RastreoCandado rastro(stvge::kCandGe, "InterruptEnd::grueso");
 		stvmed::Cronometro c(stvmed::R_CAND_INTERRUPT);
 		candadoGe.lock();
+		rastroVivo.emplace(stvge::kCandGe, "InterruptEnd::grueso-vivo");
 	}
 	stvge::CandadoDL zonaDL("InterruptEnd");   // contabilidad de listas
 	interruptRunning = false;

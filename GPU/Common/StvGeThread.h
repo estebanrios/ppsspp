@@ -44,6 +44,7 @@
 #pragma once
 
 #include <atomic>
+#include <optional>
 #include <unistd.h>
 #include <cstdint>
 #include <mutex>
@@ -108,6 +109,7 @@ public:
 	// medidor apagado esto es un load relaxed y una rama predecible mas.
 	explicit CandadoGe(stvmed::Ranura ranura = stvmed::R_CAND_OTRO) : tomado_(NivelActivo() != 0) {
 		if (tomado_) {
+			rastro_.emplace(kCandGe, "CandadoGe");
 			stvmed::Cronometro c(ranura);
 			g_esperandoGe.fetch_add(1, std::memory_order_relaxed);
 			g_mu.lock();
@@ -119,6 +121,7 @@ public:
 		if (tomado_) {
 			--g_candadosVivos;
 			g_mu.unlock();
+			rastro_.reset();
 		}
 	}
 	CandadoGe(const CandadoGe &) = delete;
@@ -126,9 +129,78 @@ public:
 
 private:
 	bool tomado_;
+	std::optional<RastreoCandado> rastro_;   // orden de candados
 };
 
 // --- API del modulo (implementada en StvGeThread.cpp) ------------------------
+
+// --- RASTREADOR DE ORDEN DE CANDADOS -----------------------------------------
+//
+// POR QUE EXISTE. El refactor del candado fino colgo la consola cuatro veces.
+// Tres ciclos se encontraron leyendo codigo (DrawSync/ListSync invertidos,
+// InterruptEnd pidiendo el grueso sin necesitarlo, StvGeDespacharCola
+// sosteniendo el fino sobre una Barrera) y quedo un cuarto que a ojo no
+// aparece. Buscarlo leyendo mas codigo ya demostro no alcanzar: cada intento
+// cuesta compilar, montar y medir, y el fallo es un cuelgue sin rastro.
+//
+// QUE HACE. Cada hilo lleva la PILA de candados que tiene tomados. Al tomar B
+// teniendo A, se anota la arista A->B con el sitio. Si la arista inversa B->A
+// ya se habia visto, hay un ciclo — y se dice EN EL ACTO, con los dos candados
+// y los dos sitios.
+//
+// LO IMPORTANTE: detecta la inversion la PRIMERA vez que se observan los dos
+// ordenes, aunque los dos hilos nunca lleguen a chocar. No hace falta que
+// cuelgue para saberlo. Es la diferencia entre cazar el bug y esperar que se
+// manifieste.
+//
+// COSTO: un recorrido de una pila de <=8 enteros por toma, sin asignaciones.
+// A frecuencia de syscall es ruido; y solo se compila el chequeo, no se toca
+// ningun candado de mas.
+enum CandadoId { kCandGe = 0, kCandDL = 1, kCandCola = 2, kCandInval = 3, kCandMax = 4 };
+
+inline const char *NombreCandado(int id) {
+	switch (id) {
+	case kCandGe:    return "g_mu(grueso)";
+	case kCandDL:    return "g_muDL(fino)";
+	case kCandCola:  return "g_muCola";
+	case kCandInval: return "g_muInval";
+	default:         return "?";
+	}
+}
+
+inline thread_local int g_pilaCand[8];
+inline thread_local int g_pilaHondo = 0;
+inline std::atomic<const char *> g_arista[kCandMax][kCandMax];
+inline std::atomic<uint64_t> g_ciclos{0};
+inline std::atomic<bool> g_cicloDicho[kCandMax][kCandMax];
+
+void AvisarCiclo(int a, int b, const char *sitioNuevo, const char *sitioViejo);
+
+class RastreoCandado {
+public:
+	RastreoCandado(int id, const char *sitio) : id_(id) {
+		for (int i = 0; i < g_pilaHondo; i++) {
+			const int a = g_pilaCand[i];
+			if (a == id_)
+				continue;                    // recursivo: no es arista nueva
+			g_arista[a][id_].store(sitio, std::memory_order_relaxed);
+			const char *inv = g_arista[id_][a].load(std::memory_order_relaxed);
+			if (inv) {
+				g_ciclos.fetch_add(1, std::memory_order_relaxed);
+				bool dicho = false;
+				if (g_cicloDicho[a][id_].compare_exchange_strong(dicho, true))
+					AvisarCiclo(a, id_, sitio, inv);   // se dice EN EL ACTO
+			}
+		}
+		if (g_pilaHondo < 8)
+			g_pilaCand[g_pilaHondo++] = id_;
+	}
+	~RastreoCandado() { if (g_pilaHondo > 0) g_pilaHondo--; }
+	RastreoCandado(const RastreoCandado &) = delete;
+	RastreoCandado &operator=(const RastreoCandado &) = delete;
+private:
+	int id_;
+};
 
 // --- CANDADO FINO DE LA CONTABILIDAD DE LISTAS (valvula debug.stv.dlfino) ----
 //
@@ -260,7 +332,7 @@ private:
 // ANTES, de modo que solo cuenta mientras el candado esta tomado.
 class CandadoDL {
 public:
-	explicit CandadoDL(const char *sitio) : lk_(g_muDL), testigo_(sitio) {}
+	explicit CandadoDL(const char *sitio) : rastro_(kCandDL, sitio), lk_(g_muDL), testigo_(sitio) {}
 	// Liberacion explicita: hace falta en GeIntrHandler, que suelta ANTES del
 	// despacho final porque ese despacho espera al worker (y el worker necesita
 	// este mismo candado: tenerlo tomado seria un abrazo mortal).
@@ -270,6 +342,7 @@ public:
 	CandadoDL(const CandadoDL &) = delete;
 	CandadoDL &operator=(const CandadoDL &) = delete;
 private:
+	RastreoCandado rastro_;   // se anota ANTES de bloquear: si hay ciclo, se sabe aunque cuelgue
 	std::unique_lock<std::recursive_mutex> lk_;
 	TestigoDL testigo_;
 };

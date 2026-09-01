@@ -260,6 +260,7 @@ static void WorkerMain() {
 	stvmed::MarcarRol(stvmed::ROL_WORKER);  // STV_MEDIDOR_ESPERAS_v1
 	AfinidadCluster(true);
 
+	RastreoCandado rastroCola(kCandCola, "g_muCola");
 	std::unique_lock<std::mutex> lk(g_muCola);
 	while (true) {
 		{
@@ -286,9 +287,11 @@ static void WorkerMain() {
 			// el candado (espera al EmuThread) y lo que dura la pasada (trabajo).
 			std::unique_lock<std::recursive_mutex> ge(g_mu, std::defer_lock);
 			{
+				RastreoCandado rastro(kCandGe, "worker::pasada");
 				stvmed::Cronometro c(stvmed::R_W_CANDADO);
 				ge.lock();
 			}
+			RastreoCandado rastroPasada(kCandGe, "worker::pasada-vivo");
 			stvmed::Cronometro cPasada(stvmed::R_W_PASADA);
 			g_lockPasada = &ge;
 			DLResult r = gpu->ProcessDLQueue();
@@ -376,7 +379,8 @@ bool DiferirInvalidacion(uint32_t addr, int size, int type) {
 	// worker: es la unica que lo tiene milisegundos. Cualquier otro tenedor lo
 	// suelta enseguida, y ahi bloquear sale mas barato que encolar.
 	{
-		std::lock_guard<std::mutex> lk(g_muCola);
+		RastreoCandado rastroCola(kCandCola, "g_muCola");
+	std::lock_guard<std::mutex> lk(g_muCola);
 		if (!g_corriendo)
 			return false;
 	}
@@ -389,6 +393,7 @@ bool DiferirInvalidacion(uint32_t addr, int size, int type) {
 		return false;
 	}
 	{
+		RastreoCandado rastroInv(kCandInval, "g_muInval");
 		std::lock_guard<std::mutex> lk(g_muInval);
 		if (g_invalPend.size() >= kMaxInval)
 			return false;
@@ -405,6 +410,7 @@ bool DiferirInvalidacion(uint32_t addr, int size, int type) {
 static void DrenarInvalidaciones() {
 	std::vector<InvalPend> lote;
 	{
+		RastreoCandado rastroInv(kCandInval, "g_muInval");
 		std::lock_guard<std::mutex> lk(g_muInval);
 		if (g_invalPend.empty())
 			return;
@@ -536,7 +542,7 @@ static uint32_t g_dlFinoRevision = 0;
 // colisiones en 276.468 entradas con el candado grueso), y que el camino comun
 // de InterruptEnd es contabilidad pura (16.638 llamadas: pop=0, conGpu=0).
 // Retomar desde aca con un rastreador de orden de candados, no a ojo.
-bool DLFinoActivo() { return false; }
+bool DLFinoActivo() { return g_dlFino != 0; }   // el rastreador necesita poder entrar al camino que cuelga
 
 static int ResolverDLFino() {
 	const char *e = getenv("STV_GE_DLFINO");
@@ -549,6 +555,19 @@ static int ResolverDLFino() {
 	return 0;
 }
 
+
+// Aviso INMEDIATO del ciclo. Va por kmsg apenas se detecta, no en el testigo
+// periodico: si el ciclo termina en cuelgue, un reporte que llega "cada 5 s"
+// no llega nunca. Se dice una sola vez por par para no inundar.
+void AvisarCiclo(int a, int b, const char *sitioNuevo, const char *sitioViejo) {
+	char t[256];
+	snprintf(t, sizeof(t),
+		"STV: *** CICLO DE CANDADOS *** %s -> %s en '%s'  CONTRA  %s -> %s visto en '%s'",
+		NombreCandado(a), NombreCandado(b), sitioNuevo ? sitioNuevo : "?",
+		NombreCandado(b), NombreCandado(a), sitioViejo ? sitioViejo : "?");
+	Emitir(t);
+}
+
 static void CrearWorker() {
 	g_apagando = false;
 	g_worker = std::thread(&WorkerMain);
@@ -559,7 +578,8 @@ static void CrearWorker() {
 
 static void PostearRun(uint64_t tick) {
 	{
-		std::lock_guard<std::mutex> lk(g_muCola);
+		RastreoCandado rastroCola(kCandCola, "g_muCola");
+	std::lock_guard<std::mutex> lk(g_muCola);
 		// Coalescencia: si ya hay una orden sin atender, la pasada que venga
 		// cubre tambien este pedido (dlQueue es la cola real). Conservamos el
 		// tick de la PRIMERA orden: atTicks nunca queda antes de su posteo, y
@@ -574,6 +594,7 @@ static void PostearRun(uint64_t tick) {
 }
 
 void PostearInterrupt(int listid, uint32_t pc, uint64_t atTicks) {
+	RastreoCandado rastroCola(kCandCola, "g_muCola");
 	std::lock_guard<std::mutex> lk(g_muCola);
 	g_terminaciones.push_back(Trigger{ Clase::Interrupt, listid, pc, atTicks });
 	g_triggers.fetch_add(1, std::memory_order_relaxed);
@@ -581,6 +602,7 @@ void PostearInterrupt(int listid, uint32_t pc, uint64_t atTicks) {
 }
 
 void PostearSync(int type, int id, uint64_t atTicks) {
+	RastreoCandado rastroCola(kCandCola, "g_muCola");
 	std::lock_guard<std::mutex> lk(g_muCola);
 	g_terminaciones.push_back(Trigger{ Clase::Sync, type, (uint32_t)id, atTicks });
 	g_triggers.fetch_add(1, std::memory_order_relaxed);
@@ -596,7 +618,8 @@ void Drenar() {
 
 	std::deque<Trigger> lote;
 	{
-		std::lock_guard<std::mutex> lk(g_muCola);
+		RastreoCandado rastroCola(kCandCola, "g_muCola");
+	std::lock_guard<std::mutex> lk(g_muCola);
 		lote.swap(g_terminaciones);
 		// Dentro del candado: un posteo del worker posterior al swap vuelve a
 		// levantar la bandera despues de este store, nunca antes.
@@ -627,6 +650,7 @@ void Drenar() {
 static void EsperarIdleInterno(bool contarEspera, stvmed::Ranura ranura = stvmed::R_ESPERA_IDLE) {
 	if (!g_workerCreado.load(std::memory_order_relaxed))
 		return;
+	RastreoCandado rastroCola(kCandCola, "g_muCola");
 	std::unique_lock<std::mutex> lk(g_muCola);
 	if (g_corriendo || g_ordenPendiente) {
 		if (contarEspera)
@@ -723,7 +747,8 @@ static void DrenarInvalidacionesSiQuedaron() {
 	if (g_invalCuenta.load(std::memory_order_relaxed) == 0)
 		return;
 	{
-		std::lock_guard<std::mutex> lk(g_muCola);
+		RastreoCandado rastroCola(kCandCola, "g_muCola");
+	std::lock_guard<std::mutex> lk(g_muCola);
 		if (g_corriendo || g_ordenPendiente)
 			return;   // el worker las va a drenar el solo al terminar
 	}
@@ -765,7 +790,8 @@ void PorVblank() {
 			const char *sChoque = g_choqueSitio.load(std::memory_order_relaxed);
 			const char *sDuenio = g_choqueDueñoSitio.load(std::memory_order_relaxed);
 			snprintf(b, sizeof(b),
-				"STV: dl intrEnd=%llu compl=%llu pop=%llu conGpu=%llu fino=%d entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
+				"STV: dl ciclos=%llu intrEnd=%llu compl=%llu pop=%llu conGpu=%llu fino=%d entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
+				(unsigned long long)g_ciclos.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndTotal.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndCompletada.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndPop.load(std::memory_order_relaxed),
@@ -819,7 +845,8 @@ void PorVblank() {
 			{
 				// .size() sobre el vector mientras otro hilo puede estar
 				// insertando es una carrera de verdad, no un dato aproximado.
-				std::lock_guard<std::mutex> lk(g_muInval);
+				RastreoCandado rastroInv(kCandInval, "g_muInval");
+		std::lock_guard<std::mutex> lk(g_muInval);
 				pend = g_invalPend.size();
 			}
 			char b[192];
@@ -873,7 +900,8 @@ void PorVblank() {
 	// conmuta; se reintenta el proximo vblank (el worker queda idle entre
 	// pasadas, asi que la ventana aparece enseguida).
 	{
-		std::lock_guard<std::mutex> lk(g_muCola);
+		RastreoCandado rastroCola(kCandCola, "g_muCola");
+	std::lock_guard<std::mutex> lk(g_muCola);
 		if (g_corriendo || g_ordenPendiente)
 			return;
 	}
@@ -901,7 +929,8 @@ void PorVblank() {
 void Apagar() {
 	if (g_workerCreado.load(std::memory_order_relaxed)) {
 		{
-			std::lock_guard<std::mutex> lk(g_muCola);
+			RastreoCandado rastroCola(kCandCola, "g_muCola");
+	std::lock_guard<std::mutex> lk(g_muCola);
 			g_apagando = true;
 		}
 		g_cvOrden.notify_one();
@@ -916,7 +945,8 @@ void Apagar() {
 	// drenaje. Se cuenta y se dice.
 	size_t descartadas = 0;
 	{
-		std::lock_guard<std::mutex> lk(g_muCola);
+		RastreoCandado rastroCola(kCandCola, "g_muCola");
+	std::lock_guard<std::mutex> lk(g_muCola);
 		descartadas = g_terminaciones.size();
 		g_terminaciones.clear();
 		g_ordenPendiente = false;

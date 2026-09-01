@@ -40,6 +40,8 @@
 #include "Core/HLE/KernelWaitHelpers.h"
 #include "GPU/GPUState.h"
 #include "GPU/GPUCommon.h"
+#include <optional>
+
 #include "Common/StvMedidor.h"
 #include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 
@@ -106,10 +108,13 @@ public:
 		// este hilo deja de esperar la pasada del worker (2,45 ms) y espera solo
 		// las fronteras (microsegundos). Con la valvula apagada se toman los dos
 		// y el comportamiento es el de hoy.
+		std::optional<stvge::RastreoCandado> rastroVivo;
 		std::unique_lock<std::recursive_mutex> candadoGe(stvge::g_mu, std::defer_lock);
 		if (stvge::NivelActivo() != 0 && !stvge::DLFinoActivo()) {
+			stvge::RastreoCandado rastro(stvge::kCandGe, "GeIntrHandler");
 			stvmed::Cronometro c(stvmed::R_CAND_INTERRUPT);
 			candadoGe.lock();
+			rastroVivo.emplace(stvge::kCandGe, "GeIntrHandler-vivo");
 		}
 		// Zona de contabilidad de listas: el testigo cuenta entradas y, sobre
 		// todo, ENTRADAS CONCURRENTES. Con el candado grueso debe dar 0.
@@ -212,6 +217,7 @@ public:
 		// este hilo deja de esperar la pasada del worker (2,45 ms) y espera solo
 		// las fronteras (microsegundos). Con la valvula apagada se toman los dos
 		// y el comportamiento es el de hoy.
+		std::optional<stvge::RastreoCandado> rastroVivo;
 		std::unique_lock<std::recursive_mutex> candadoGe(stvge::g_mu, std::defer_lock);
 		if (stvge::NivelActivo() != 0 && !stvge::DLFinoActivo()) {
 			stvmed::Cronometro c(stvmed::R_CAND_INTERRUPT);   // STV_MEDIDOR: ver run()
