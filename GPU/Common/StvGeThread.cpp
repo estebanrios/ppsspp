@@ -635,7 +635,17 @@ static int ResolverDLFino() {
 	if (__system_property_get("debug.stv.dlfino", prop) > 0 && prop[0])
 		return (prop[0] >= '1' && prop[0] <= '9') ? 1 : 0;
 #endif
-	return 0;
+	// ENCENDIDO POR DEFECTO desde f24. Medido en la ranura 4, 4 corridas por
+	// lado: mediana 53,3 -> 58,1, p95 49,8 -> 55,1, %bajo50 6,7 -> 0,0. Hacen
+	// falta LOS DOS (esto y el diferimiento de InterruptEnd): el diferimiento
+	// solo da 53,3, o sea nada, porque con esto apagado los otros tres sitios
+	// del camino de interrupciones siguen tomando el candado grueso y
+	// esperando la pasada del worker igual.
+	// Validado por el usuario: sesion larga de juego, 5 h de uptime, CERO
+	// caidas, cero errores del GE, 33,4 M de entradas al candado fino con CERO
+	// colisiones, y sin artefactos graficos.
+	// Se apaga con: setprop debug.stv.dlfino 0
+	return 1;
 }
 
 
