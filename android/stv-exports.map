@@ -1,0 +1,19 @@
+/* STV — que exporta la libreria.
+ *
+ * -fvisibility=hidden deja que el compilador resuelva las llamadas internas
+ * DIRECTO en vez de pasarlas por la tabla de indireccion (el @plt del perfil,
+ * 1,23 % del hilo). Pero las funciones JNI estan declaradas como `extern "C"`
+ * PELADAS, sin atributo de visibilidad, asi que la bandera tambien las escondio:
+ * pasaron de 41 a 1 y la app dejo de arrancar. Verificado en el aparato.
+ *
+ * Este guion las devuelve sin tocar 41 declaraciones: Java las encuentra, y
+ * todo lo demas queda interno.
+ */
+{
+  global:
+    Java_*;
+    JNI_OnLoad;
+    JNI_OnUnload;
+  local:
+    *;
+};
