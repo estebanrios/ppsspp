@@ -866,6 +866,14 @@ void GPUCommonHW::FastRunLoop(DisplayList &list) {
 	const CommandInfo *cmdInfo = cmdInfo_;
 	int dc = downcount;
 	for (; dc > 0; --dc) {
+		// Frontera de comando: `gstate` esta consistente y `list.pc` no se esta
+		// escribiendo. Si EnqueueList esta esperando el candado grueso, se le
+		// cede aca en vez de hacerlo esperar la pasada entera (medido: 5,52 ms
+		// por cuadro, el 85 % de la espera del EmuThread en la ranura 5).
+		// Cada 256 comandos: con la valvula apagada es un load relajado y una
+		// rama predecible cada 256 vueltas.
+		if ((dc & 255) == 0)
+			stvge::CederEnComando();
 		// We know that display list PCs have the upper nibble == 0 - no need to mask the pointer
 		const u32 op = *(const u32_le *)(Memory::base + list.pc);
 		const u32 cmd = op >> 24;

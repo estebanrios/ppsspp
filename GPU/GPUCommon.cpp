@@ -392,7 +392,12 @@ void GPUCommon::ResetMatrices() {
 u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<PspGeListArgs> args, bool head, bool *runList) {
 	// STV_GE_THREAD_v1: puro estado (dls[], dlQueue, currentList) — candado y
 	// nada mas; la ejecucion la despacha el caller DESPUES de soltar esto.
+	// Se publica que ESTE camino esta esperando, para que el worker pueda ceder
+	// a mitad de lista. Solo por este: es el unico auditado que no toca estado
+	// de GPU. Ver CederEnComando en StvGeThread.h.
+	stvge::g_esperandoEncola.fetch_add(1, std::memory_order_relaxed);
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_ENCOLA);  // STV_MEDIDOR_ESPERAS_v1
+	stvge::g_esperandoEncola.fetch_sub(1, std::memory_order_relaxed);
 	stvge::CandadoDL testigoDL("EnqueueList");   // zona de contabilidad de listas (ver StvGeThread.h)
 	*runList = false;
 

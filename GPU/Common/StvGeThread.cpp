@@ -533,6 +533,40 @@ void CederEnFronteraDeLista() {
 }
 
 
+static std::atomic<uint64_t> g_cesionesCmd{0};
+static int g_cederCmd = 0;
+static int g_cederCmdRevision = 0;
+
+static int ResolverCederCmd() {
+	const char *e = getenv("STV_GE_CEDER_CMD");
+	if (e && *e) return (*e >= '1' && *e <= '9') ? 1 : 0;
+#if defined(__ANDROID__)
+	char prop[PROP_VALUE_MAX] = { 0 };
+	if (__system_property_get("debug.stv.ceder.cmd", prop) > 0 && prop[0])
+		return (prop[0] >= '1' && prop[0] <= '9') ? 1 : 0;
+#endif
+	return 0;
+}
+
+void CederEnComando() {
+	if (g_cederCmd == 0 || !g_lockPasada)
+		return;
+	if (!EnWorker())
+		return;
+	// Con un CandadoGe anidado vivo, soltar UNA vez no libera el recursivo.
+	if (g_candadosVivos != 0)
+		return;
+	// SOLO por EnqueueList. Cualquier otro que espere el candado grueso puede
+	// tocar estado de GPU, y dejarlo entrar a mitad de lista es justo el ciclo
+	// que colgo la consola en los intentos anteriores del candado fino.
+	if (g_esperandoEncola.load(std::memory_order_relaxed) == 0)
+		return;
+	g_lockPasada->unlock();
+	std::this_thread::yield();
+	g_lockPasada->lock();
+	g_cesionesCmd.fetch_add(1, std::memory_order_relaxed);
+}
+
 // --- Testigo de exclusion: prueba de sensibilidad ----------------------------
 //
 // Un contador en cero no prueba nada si nunca comprobamos que sabe subir. Esto
@@ -860,6 +894,16 @@ void PorVblank() {
 	// Releida cada vblank (a diferencia del contador de epi: aca la llamada ya
 	// es 1/cuadro, la prop cuesta ~nada y el A/B conmuta al toque).
 	const uint32_t vb = g_vblanksDeJuego.fetch_add(1, std::memory_order_relaxed) + 1;
+	if (++g_cederCmdRevision >= kInvalFramesRevision) {
+		g_cederCmdRevision = 0;
+		const int antes = g_cederCmd;
+		g_cederCmd = ResolverCederCmd();
+		if (g_cederCmd != antes) {
+			char b[128];
+			snprintf(b, sizeof(b), "STV: ceder en comando %s (debug.stv.ceder.cmd)", g_cederCmd ? "ENCENDIDO" : "apagado");
+			Emitir(b);
+		}
+	}
 	if (++g_dlFinoRevision >= kInvalFramesRevision) {
 		g_dlFinoRevision = 0;
 		const int antes = g_dlFino;
@@ -883,7 +927,7 @@ void PorVblank() {
 			const char *sChoque = g_choqueSitio.load(std::memory_order_relaxed);
 			const char *sDuenio = g_choqueDueñoSitio.load(std::memory_order_relaxed);
 			snprintf(b, sizeof(b),
-				"STV: dl ciclos=%llu intrEnd=%llu compl=%llu pop=%llu conGpu=%llu fino=%d limpDif=%llu limpDir=%llu entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
+				"STV: dl ciclos=%llu intrEnd=%llu compl=%llu pop=%llu conGpu=%llu fino=%d limpDif=%llu limpDir=%llu cesCmd=%llu entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
 				(unsigned long long)g_ciclos.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndTotal.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndCompletada.load(std::memory_order_relaxed),
@@ -892,6 +936,7 @@ void PorVblank() {
 				g_dlFino,
 				(unsigned long long)g_limpiezasDiferidas.load(std::memory_order_relaxed),
 				(unsigned long long)g_limpiezasDirectas.load(std::memory_order_relaxed),
+				(unsigned long long)g_cesionesCmd.load(std::memory_order_relaxed),
 				(unsigned long long)g_entradasDL.load(std::memory_order_relaxed),
 				(unsigned long long)g_colisionesDL.load(std::memory_order_relaxed),
 				g_picoDL.load(std::memory_order_relaxed),

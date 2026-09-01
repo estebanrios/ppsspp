@@ -443,6 +443,29 @@ inline std::atomic<uint64_t> g_limpiezasDirectas{0};
 // solo abre una ventana para que el que espera entre antes.
 void CederEnFronteraDeLista();
 
+// --- Cesion DENTRO de una lista, acotada a EnqueueList -----------------------
+//
+// Medido en la ranura 5: cand_encola son 5,52 ms de los 6,49 de espera del
+// EmuThread (85 %), y es el unico campo con correlacion NEGATIVA contra el VPS.
+// La cesion entre listas ayuda poco (+2 %) porque el worker hace pocas listas
+// por pasada: el bloqueo empieza DENTRO de una lista larga.
+//
+// POR QUE ES SEGURO CEDER ACA, y no lo era para el camino de interrupciones:
+// ceder no crea concurrencia, crea EXCLUSION MUTUA — el worker se detiene, el
+// otro entra, el worker sigue. Con el worker detenido en una frontera de
+// comando:
+//   * `gstate` esta consistente (es como avanza el GE, comando a comando).
+//   * `list.pc` no se esta escribiendo, asi que leerlo no es una carrera.
+//   * EnqueueList con el worker a mitad de lista SOLO puede APPENDear: la rama
+//     `head` exige currentList->state == PAUSED (esta RUNNING, devuelve error) y
+//     la rama que reasigna currentList exige currentList == nullptr (no lo es).
+//     O sea que no puede tocar la lista que el worker esta ejecutando.
+//
+// Por eso se exige que el que espera sea EnqueueList y no cualquiera: es el
+// unico camino auditado que no toca estado de GPU. Valvula debug.stv.ceder.cmd.
+inline std::atomic<int> g_esperandoEncola{0};
+void CederEnComando();
+
 // Identidad de hilo: true SOLO en el worker. Es lo que consulta el choke point
 // de __GeTriggerSync/__GeTriggerInterrupt en sceGe.cpp para decidir si postear.
 bool EnWorker();
