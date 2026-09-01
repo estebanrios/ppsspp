@@ -359,7 +359,12 @@ public:
 	// despacho final porque ese despacho espera al worker (y el worker necesita
 	// este mismo candado: tenerlo tomado seria un abrazo mortal).
 	void soltar() {
-		if (lk_.owns_lock()) { testigo_.soltar(); lk_.unlock(); }
+		// LOS TRES a la vez. Antes soltaba el candado y el testigo pero NO el
+		// rastro, y el grafo de orden seguia creyendo que el fino estaba tomado:
+		// eso inventaba la arista g_muDL->g_mu y me hizo perseguir un ciclo
+		// fantasma. Cuarta vez hoy que un instrumento me miente por alcance;
+		// la regla es una sola: el rastro muere DONDE muere el candado.
+		if (lk_.owns_lock()) { testigo_.soltar(); lk_.unlock(); rastro_.soltar(); }
 	}
 	CandadoDL(const CandadoDL &) = delete;
 	CandadoDL &operator=(const CandadoDL &) = delete;
