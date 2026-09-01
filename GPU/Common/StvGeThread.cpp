@@ -549,7 +549,30 @@ static uint32_t g_dlFinoRevision = 0;
 // fases lanza std::system_error desde GeIntrHandler::handleResult — un unlock
 // sobre un candado que no se posee, o un lock sobre uno ya tomado. Es un error
 // de LOGICA mio, no de orden, y hay que corregirlo antes de volver a encenderla.
-bool DLFinoActivo() { return false; }
+// DESCLAVADA (2026-09-01) — con dos motivos, y ninguno es optimismo:
+//
+// 1. El motivo del ultimo clavado YA NO EXISTE. Decia: "el orden quedo limpio
+//    (0 ciclos) pero el camino de dos fases lanza std::system_error desde
+//    handleResult — un unlock sobre un candado que no se posee". Ese error se
+//    encontro y se corrigio despues: eran LLAVES FALTANTES en sceGe.cpp, que
+//    hacian correr el unlock siempre aunque el grueso nunca se hubiera tomado.
+//    El sintoma descrito y el bug corregido son el mismo.
+//
+// 2. El veredicto de "cero ganancia" que le siguio se midio ANTES de descubrir
+//    que dos de las tres escenas de Spiderman no sirven para comparar: la
+//    ranura 3 oscila 37..60 por fase y la ranura 2 ya esta en el techo. Ese
+//    veredicto no distingue "no sirve" de "se midio donde no se ve".
+//
+// Y lo que hoy dice el medidor en la escena que SI sirve (ranura 4):
+//    wall 19,4 ms = cpuEmu 16,4 + esperaEmu 3,1 + resto -0,2
+//    cand_interrupt = 2,98 ms/cuadro, 6 veces, pico 3,7 ms
+// O sea: el 95 % de toda la espera del hilo de emulacion es exactamente lo que
+// este candado fino existe para quitar. Son 3 ms de 19,4 — recuperarlos lleva
+// el cuadro a 16,4 ms, que es 60 VPS.
+//
+// Sigue siendo VALVULA, apagada por defecto: en 0 el comportamiento es
+// identico al de hoy. Historial completo del clavado, arriba.
+bool DLFinoActivo() { return g_dlFino != 0; }
 
 static int ResolverDLFino() {
 	const char *e = getenv("STV_GE_DLFINO");
