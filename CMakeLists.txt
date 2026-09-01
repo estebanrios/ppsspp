@@ -1801,6 +1801,8 @@ list(APPEND CoreExtra
 	Core/MIPS/IR/IRInst.h
 	Core/MIPS/IR/IRInterpreter.cpp
 	Core/MIPS/IR/IRInterpreter.h
+	Core/MIPS/StvDestinoSalto.cpp
+	Core/MIPS/StvDestinoSalto.h
 	Core/MIPS/IR/IRJit.cpp
 	Core/MIPS/IR/IRJit.h
 	Core/MIPS/IR/IRNativeCommon.cpp

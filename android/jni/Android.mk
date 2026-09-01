@@ -515,6 +515,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/MIPS/MIPSTracer.cpp \
   $(SRC)/Core/MIPS/IR/IRAnalysis.cpp \
   $(SRC)/Core/MIPS/IR/IRFrontend.cpp \
+  $(SRC)/Core/MIPS/StvDestinoSalto.cpp \
   $(SRC)/Core/MIPS/IR/IRJit.cpp \
   $(SRC)/Core/MIPS/IR/IRCompALU.cpp \
   $(SRC)/Core/MIPS/IR/IRCompBranch.cpp \

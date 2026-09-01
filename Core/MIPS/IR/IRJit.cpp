@@ -39,6 +39,7 @@
 #include "Core/MIPS/IR/IRRegCache.h"
 #include "Core/MIPS/IR/IRInterpreter.h"
 #include "Core/MIPS/IR/IRJit.h"
+#include "Core/MIPS/StvDestinoSalto.h"
 #include "Core/MIPS/IR/IRNativeCommon.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
 #include "Core/Reporting.h"
@@ -250,6 +251,10 @@ void IRJit::UnlinkBlock(u8 *checkedEntry, u32 originalAddress) {
 }
 
 void IRBlockCache::Clear() {
+	// Se vacia todo: los bloques se destruyen en masa y cada entrada apunta a
+	// una cookie que deja de existir.
+	stvjit::OlvidarTodos();
+	stvjit::VolcarTestigo("clear");
 	for (int i = 0; i < (int)blocks_.size(); ++i) {
 		int cookie = compileToNative_ ? blocks_[i].GetNativeOffset() : blocks_[i].GetIRArenaOffset();
 		blocks_[i].Destroy(cookie);
@@ -542,6 +547,7 @@ bool IRBlock::RestoreOriginalFirstOp(int cookie) {
 	const u32 emuhack = MIPS_EMUHACK_OPCODE | cookie;
 	if (Memory::ReadUnchecked_U32(origAddr_) == emuhack) {
 		Memory::Write_Opcode_JIT(origAddr_, origFirstOpcode_);
+		stvjit::OlvidarDestino(origAddr_);
 		return true;
 	}
 	return false;
@@ -554,6 +560,8 @@ void IRBlock::Finalize(int cookie) {
 		origFirstOpcode_ = Memory::Read_Opcode_JIT(origAddr_);
 		MIPSOpcode opcode = MIPSOpcode(MIPS_EMUHACK_OPCODE | cookie);
 		Memory::Write_Opcode_JIT(origAddr_, opcode);
+		// Cookie nueva para el mismo pc: cualquier entrada previa quedo mintiendo.
+		stvjit::OlvidarDestino(origAddr_);
 	} else {
 		WARN_LOG(Log::JIT, "Finalizing invalid block (cookie: %d)", cookie);
 	}
@@ -570,6 +578,9 @@ void IRBlock::Destroy(int cookie) {
 			DEBUG_LOG(Log::JIT, "IRBlock::Destroy: Note: Block at %08x was overwritten - checked for %08x, got %08x when restoring the MIPS op to %08x", origAddr_, opcode.encoding, memOp, origFirstOpcode_.encoding);
 		}
 		// TODO: Also wipe the block in the IR opcode arena.
+		// La cache de destinos guarda la palabra emuhack de este pc: si sobrevive
+		// al bloque, el proximo salto indirecto aterriza en codigo liberado.
+		stvjit::OlvidarDestino(origAddr_);
 		// Let's mark this invalid so we don't try to clear it again.
 		origAddr_ = 0;
 	}
