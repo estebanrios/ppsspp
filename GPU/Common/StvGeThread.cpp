@@ -534,6 +534,8 @@ void CederEnFronteraDeLista() {
 
 
 static std::atomic<uint64_t> g_cesionesCmd{0};
+// Un cero sin explicacion no es un dato: se cuenta CUAL guarda freno.
+static std::atomic<uint64_t> g_ccMiro{0}, g_ccNoWorker{0}, g_ccAnidado{0}, g_ccNadieEspera{0};
 static int g_cederCmd = 0;
 static int g_cederCmdRevision = 0;
 
@@ -551,16 +553,23 @@ static int ResolverCederCmd() {
 void CederEnComando() {
 	if (g_cederCmd == 0 || !g_lockPasada)
 		return;
-	if (!EnWorker())
+	g_ccMiro.fetch_add(1, std::memory_order_relaxed);
+	if (!EnWorker()) {
+		g_ccNoWorker.fetch_add(1, std::memory_order_relaxed);
 		return;
+	}
 	// Con un CandadoGe anidado vivo, soltar UNA vez no libera el recursivo.
-	if (g_candadosVivos != 0)
+	if (g_candadosVivos != 0) {
+		g_ccAnidado.fetch_add(1, std::memory_order_relaxed);
 		return;
+	}
 	// SOLO por EnqueueList. Cualquier otro que espere el candado grueso puede
 	// tocar estado de GPU, y dejarlo entrar a mitad de lista es justo el ciclo
 	// que colgo la consola en los intentos anteriores del candado fino.
-	if (g_esperandoEncola.load(std::memory_order_relaxed) == 0)
+	if (g_esperandoEncola.load(std::memory_order_relaxed) == 0) {
+		g_ccNadieEspera.fetch_add(1, std::memory_order_relaxed);
 		return;
+	}
 	g_lockPasada->unlock();
 	std::this_thread::yield();
 	g_lockPasada->lock();
@@ -923,11 +932,11 @@ void PorVblank() {
 #endif
 		if (++g_dlAnuncio >= kInvalAnuncioCada) {
 			g_dlAnuncio = 0;
-			char b[240];
+			char b[320];
 			const char *sChoque = g_choqueSitio.load(std::memory_order_relaxed);
 			const char *sDuenio = g_choqueDueñoSitio.load(std::memory_order_relaxed);
 			snprintf(b, sizeof(b),
-				"STV: dl ciclos=%llu intrEnd=%llu compl=%llu pop=%llu conGpu=%llu fino=%d limpDif=%llu limpDir=%llu cesCmd=%llu entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
+				"STV: dl ciclos=%llu intrEnd=%llu compl=%llu pop=%llu conGpu=%llu fino=%d limpDif=%llu limpDir=%llu cesCmd=%llu/miro=%llu/noW=%llu/anid=%llu/nadie=%llu entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
 				(unsigned long long)g_ciclos.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndTotal.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndCompletada.load(std::memory_order_relaxed),
@@ -937,6 +946,10 @@ void PorVblank() {
 				(unsigned long long)g_limpiezasDiferidas.load(std::memory_order_relaxed),
 				(unsigned long long)g_limpiezasDirectas.load(std::memory_order_relaxed),
 				(unsigned long long)g_cesionesCmd.load(std::memory_order_relaxed),
+				(unsigned long long)g_ccMiro.load(std::memory_order_relaxed),
+				(unsigned long long)g_ccNoWorker.load(std::memory_order_relaxed),
+				(unsigned long long)g_ccAnidado.load(std::memory_order_relaxed),
+				(unsigned long long)g_ccNadieEspera.load(std::memory_order_relaxed),
 				(unsigned long long)g_entradasDL.load(std::memory_order_relaxed),
 				(unsigned long long)g_colisionesDL.load(std::memory_order_relaxed),
 				g_picoDL.load(std::memory_order_relaxed),

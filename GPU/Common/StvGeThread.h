@@ -464,6 +464,9 @@ void CederEnFronteraDeLista();
 // Por eso se exige que el que espera sea EnqueueList y no cualquiera: es el
 // unico camino auditado que no toca estado de GPU. Valvula debug.stv.ceder.cmd.
 inline std::atomic<int> g_esperandoEncola{0};
+// Contador de comandos del worker, para la cadencia. No hace falta atomico: lo
+// toca solo el worker.
+inline unsigned g_comandosDesdeCesion = 0;
 void CederEnComando();
 
 // Identidad de hilo: true SOLO en el worker. Es lo que consulta el choke point
