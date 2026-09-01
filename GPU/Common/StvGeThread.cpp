@@ -278,6 +278,7 @@ static void WorkerMain() {
 		tl_tickOrden = g_tickOrden;
 		g_ordenPendiente = false;
 		g_corriendo = true;
+		rastroCola.soltar();   // el rastro sigue al candado REAL
 		lk.unlock();
 
 		{
@@ -309,6 +310,7 @@ static void WorkerMain() {
 		g_pasadas.fetch_add(1, std::memory_order_relaxed);
 
 		lk.lock();
+		rastroCola.retomar("g_muCola");
 		g_corriendo = false;
 		if (!g_ordenPendiente)
 			g_cvIdle.notify_all();

@@ -133,7 +133,10 @@ void AvisarCiclo(int a, int b, const char *sitioNuevo, const char *sitioViejo);
 
 class RastreoCandado {
 public:
-	RastreoCandado(int id, const char *sitio) : id_(id) {
+	RastreoCandado(int id, const char *sitio) : id_(id) { anotar(sitio); }
+
+private:
+	void anotar(const char *sitio) {
 		for (int i = 0; i < g_pilaHondo; i++) {
 			const int a = g_pilaCand[i];
 			if (a == id_)
@@ -150,11 +153,30 @@ public:
 		if (g_pilaHondo < 8)
 			g_pilaCand[g_pilaHondo++] = id_;
 	}
-	~RastreoCandado() { if (g_pilaHondo > 0) g_pilaHondo--; }
+public:
+	// El rastro tiene que seguir al candado REAL, no al alcance del objeto. Con
+	// unique_lock que hace unlock()/lock() explicitos (el lazo del worker suelta
+	// g_muCola antes de tomar g_mu), un rastro de alcance reporta aristas que no
+	// existen: fue la causa de 3 de los 4 "ciclos" del primer reporte.
+	// Se saca POR ID, no por tope: la pila puede desarmarse fuera de orden.
+	void soltar() {
+		if (!vivo_) return;
+		vivo_ = false;
+		for (int i = g_pilaHondo - 1; i >= 0; i--) {
+			if (g_pilaCand[i] == id_) {
+				for (int j = i; j < g_pilaHondo - 1; j++) g_pilaCand[j] = g_pilaCand[j + 1];
+				g_pilaHondo--;
+				return;
+			}
+		}
+	}
+	void retomar(const char *sitio) { if (!vivo_) { anotar(sitio); vivo_ = true; } }
+	~RastreoCandado() { soltar(); }
 	RastreoCandado(const RastreoCandado &) = delete;
 	RastreoCandado &operator=(const RastreoCandado &) = delete;
 private:
 	int id_;
+	bool vivo_ = true;
 };
 
 // Profundidad de CandadoGe VIVOS en este hilo. La cesion en frontera de lista
