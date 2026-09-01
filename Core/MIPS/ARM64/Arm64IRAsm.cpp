@@ -22,6 +22,10 @@
 #include "Common/Log.h"
 #include "Core/CoreTiming.h"
 #include "Core/MemMap.h"
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
+
 #include "Core/MIPS/ARM64/Arm64IRJit.h"
 #include "Core/MIPS/ARM64/Arm64IRRegCache.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
@@ -243,6 +247,26 @@ void Arm64JitBackend::GenerateFixedCode(MIPSState *mipsState) {
 	fp_.ABI_PopRegisters(regs_to_save, regs_to_save_fp);
 
 	RET();
+
+	// STV: publicar las direcciones del despachador para poder ATRIBUIR el
+	// perfil en vez de inferirlo. Aislarlo por concentracion de direcciones es
+	// adivinar: el JIT ubica su codigo distinto en cada arranque y las
+	// direcciones de un perfil viejo no valen en el proceso nuevo. Con esto,
+	// una muestra cae dentro del despachador o no cae, sin interpretacion.
+	{
+		const uint8_t *finDisp = GetCodePtr();
+		char b[240];
+		snprintf(b, sizeof(b),
+			"STVJIT: base=%p enter=%p disp=%p fetch=%p fin=%p  (despachador %d bytes)",
+			(const void *)GetBasePtr(), (const void *)hooks_.enterDispatcher,
+			(const void *)hooks_.dispatcher, (const void *)hooks_.dispatchFetch,
+			(const void *)finDisp, (int)(finDisp - (const uint8_t *)hooks_.dispatcher));
+#if defined(__ANDROID__)
+		__android_log_print(ANDROID_LOG_INFO, "STV", "%s", b);
+#else
+		printf("%s\n", b);
+#endif
+	}
 
 	hooks_.crashHandler = GetCodePtr();
 	MOVP2R(SCRATCH1_64, &coreState);
