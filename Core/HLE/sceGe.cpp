@@ -193,6 +193,13 @@ public:
 		}
 
 		ge_pending_cb.pop_front();
+		// EL CUARTO CICLO, cazado por el rastreador de orden de candados:
+		// InterruptEnd puede necesitar el candado GRUESO (su rama rara), y este
+		// manejador ya tiene el FINO tomado -> g_muDL -> g_mu, contra el
+		// g_mu -> g_muDL del worker. Se suelta el fino ANTES de llamarla: la
+		// contabilidad de esta funcion ya esta hecha a esta altura, y
+		// InterruptEnd toma por su cuenta lo que necesite, en el orden correcto.
+		testigoDL.soltar();
 		gpu->InterruptEnd(intrdata.listid);
 		// Seen in GoW.
 		if (subintr >= 0)
@@ -255,6 +262,13 @@ public:
 			break;
 		}
 
+		// EL CUARTO CICLO, cazado por el rastreador de orden de candados:
+		// InterruptEnd puede necesitar el candado GRUESO (su rama rara), y este
+		// manejador ya tiene el FINO tomado -> g_muDL -> g_mu, contra el
+		// g_mu -> g_muDL del worker. Se suelta el fino ANTES de llamarla: la
+		// contabilidad de esta funcion ya esta hecha a esta altura, y
+		// InterruptEnd toma por su cuenta lo que necesite, en el orden correcto.
+		testigoDL.soltar();
 		gpu->InterruptEnd(intrdata.listid);
 
 		// TODO: This is called from __KernelReturnFromInterrupt which does a bunch of stuff afterwards.
