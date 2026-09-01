@@ -26,6 +26,11 @@ alignas(64) EntradaDestino g_destinos[kDestinosMax];
 uint64_t g_aciertos;
 uint64_t g_fallos;
 
+alignas(64) SitioIC g_icSitios[kSitiosICMax];
+uint64_t g_icVia0, g_icVia1, g_icFallo;
+static int s_icModo;
+static int s_icProximo;   // se reparte al compilar; se reinicia con la cache
+
 static bool s_leido;
 static int s_modo;
 static int s_bits;
@@ -48,6 +53,8 @@ static void LeerValvula() {
 	char v[PROP_VALUE_MAX];
 	if (__system_property_get("debug.stv.destino", v) > 0 && v[0])
 		s_modo = atoi(v);
+	if (__system_property_get("debug.stv.ic", v) > 0 && v[0])
+		s_icModo = atoi(v);
 	if (__system_property_get("debug.stv.destino.mezcla", v) > 0 && v[0])
 		s_mezcla = atoi(v);
 	if (__system_property_get("debug.stv.destino.bits", v) > 0 && v[0]) {
@@ -65,9 +72,42 @@ static void LeerValvula() {
 int ModoCache() { LeerValvula(); return s_modo; }
 int BitsCache() { LeerValvula(); return s_bits; }
 int MezclaCache() { LeerValvula(); return s_mezcla; }
+int ModoIC() { LeerValvula(); return s_icModo; }
+
+int SiguienteSitioIC() {
+	// Si se pasa, se reusa el ultimo: la medicion queda algo sucia en la cola
+	// pero no se pisa memoria ajena. Se avisa una sola vez.
+	if (s_icProximo >= kSitiosICMax) {
+		static bool avisado;
+		if (!avisado) { avisado = true; STV_LOG("STVIC: se acabaron los sitios (%d)", kSitiosICMax); }
+		return kSitiosICMax - 1;
+	}
+	return s_icProximo++;
+}
+
+extern "C" uint32_t StvAnotarIC(uint32_t pc, uint32_t sitio) {
+	SitioIC &s = g_icSitios[sitio & (kSitiosICMax - 1)];
+	if (s.via0 == pc) {
+		++g_icVia0;
+		return pc;
+	}
+	if (s.via1 == pc) {
+		++g_icVia1;
+	} else {
+		++g_icFallo;
+	}
+	s.via1 = s.via0;   // move-to-front: mide 1 via y 2 vias de una sola pasada
+	s.via0 = pc;
+	return pc;
+}
 
 void OlvidarTodos() {
 	memset(g_destinos, 0xFF, sizeof(g_destinos));
+	// Los sitios se recompilan desde cero, asi que los indices se reparten de
+	// nuevo: sin reiniciar, dos sitios distintos comparten ranura y la medicion
+	// miente hacia abajo.
+	memset(g_icSitios, 0xFF, sizeof(g_icSitios));
+	s_icProximo = 0;
 }
 
 void OlvidarDestino(uint32_t pc) {
@@ -84,6 +124,18 @@ void OlvidarDestino(uint32_t pc) {
 }
 
 void VolcarTestigo(const char *motivo) {
+	uint64_t ic = g_icVia0 + g_icVia1 + g_icFallo;
+	if (ic) {
+		static uint64_t u0, u1, uf;
+		uint64_t d0 = g_icVia0 - u0, d1 = g_icVia1 - u1, df = g_icFallo - uf;
+		u0 = g_icVia0; u1 = g_icVia1; uf = g_icFallo;
+		uint64_t dt = d0 + d1 + df;
+		if (dt)
+			STV_LOG("STVIC[%s]: 1 via %.2f %%  2 vias %.2f %%  (%llu saltos, %d sitios)",
+				motivo, 100.0 * (double)d0 / (double)dt,
+				100.0 * (double)(d0 + d1) / (double)dt,
+				(unsigned long long)dt, s_icProximo);
+	}
 	uint64_t t = g_aciertos + g_fallos;
 	if (!t)
 		return;

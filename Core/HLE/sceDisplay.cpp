@@ -597,7 +597,7 @@ void hleEnterVblank(u64 userdata, int cyclesLate) {
 			// periodico solo se volcaria al limpiar el bloque de codigo, que
 			// pasa casi nunca. Una tasa de aciertos que no se puede leer no
 			// sirve para decidir el tamaño de la tabla.
-			if (stvjit::ModoCache() >= 2)
+			if (stvjit::ModoCache() >= 2 || stvjit::ModoIC() > 0)
 				stvjit::VolcarTestigo("1s");
 #endif
 		}

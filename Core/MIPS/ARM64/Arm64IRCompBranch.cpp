@@ -20,6 +20,7 @@
 #if PPSSPP_ARCH(ARM64) || (PPSSPP_PLATFORM(WINDOWS) && !defined(__LIBRETRO__))
 
 #include "Core/MIPS/ARM64/Arm64IRJit.h"
+#include "Core/MIPS/StvDestinoSalto.h"
 #include "Core/MIPS/ARM64/Arm64IRRegCache.h"
 
 // This file contains compilation for exits.
@@ -51,6 +52,16 @@ void Arm64JitBackend::CompIR_Exit(IRInst inst) {
 		exitReg = regs_.MapGPR(inst.src1);
 		FlushAll();
 		MOV(SCRATCH1, exitReg);
+		if (stvjit::ModoIC() > 0) {
+			// Medicion previa a la cache en linea: cuantas veces este SITIO
+			// salta al mismo destino que la vez anterior. Ver StvDestinoSalto.h.
+			// La llamada pisa X0..X17 (SCRATCH1 incluido), por eso el ayudante
+			// devuelve el pc y se recupera de W0.
+			MOV(W0, SCRATCH1);
+			MOVI2R(W1, (u32)stvjit::SiguienteSitioIC());
+			QuickCallFunction(SCRATCH1_64, &stvjit::StvAnotarIC);
+			MOV(SCRATCH1, W0);
+		}
 		B(dispatcherPCInSCRATCH1_);
 		break;
 

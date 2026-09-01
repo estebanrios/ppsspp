@@ -70,6 +70,43 @@ inline uint32_t IndiceDestino(uint32_t pc, int bits, int mezcla) {
 	return i & ((1u << bits) - 1u);
 }
 
+// ---------------------------------------------------------------------------
+// MEDICION DE MONOMORFISMO POR SITIO (previa a la cache en linea)
+//
+// La cache en linea graba el destino previsto como INMEDIATO en el propio flujo
+// de instrucciones de cada salida indirecta: comparar cuesta cero cargas de
+// datos, que es la unica forma de ganar aca (ver la refutacion de la tabla).
+// Pero guarda UN destino POR SITIO, y `jr $ra` es polimorfico por naturaleza:
+// una funcion llamada desde diez lados vuelve a diez lados. Si cada sitio salta
+// a un destino distinto cada vez, no acierta nunca.
+//
+// El 95,2 % que midio la tabla NO contesta esto: esa tabla esta indexada por
+// DESTINO, no por sitio. Son preguntas distintas.
+//
+// Esto mide la respuesta sin cambiar el comportamiento: cada sitio recuerda sus
+// DOS ultimos destinos (move-to-front) y se cuentan aciertos de la via 1, de la
+// via 2, y fallos. Despues sigue por el camino normal, siempre. Contesta de una
+// las dos preguntas: si conviene una cache en linea de una via o de dos.
+constexpr int kSitiosICMax = 1 << 17;   // 131072 sitios x 8 B = 1 MB
+
+struct SitioIC { uint32_t via0, via1; };
+extern SitioIC g_icSitios[kSitiosICMax];
+extern uint64_t g_icVia0, g_icVia1, g_icFallo;
+
+int ModoIC();                  // debug.stv.ic  (0 apagado, 1 medir)
+int SiguienteSitioIC();        // indice para el sitio que se esta compilando
+
+// La llama el codigo generado en cada salida indirecta. Devuelve el pc que
+// recibio para que el sitio lo recupere sin guardarlo: la llamada pisa los
+// registros temporales, y el pc tiene que sobrevivir hasta el despachador.
+//
+// Se hace por llamada y no emitiendo la comparacion en el sitio a proposito:
+// emitida serian ~20 instrucciones por sitio y hay decenas de miles, o sea
+// megabytes de codigo extra ensuciando la cache de instrucciones — justo la
+// variable que se quiere medir limpia. Asi es mas lento, pero lo que se busca
+// son PROPORCIONES, y no dependen de la velocidad.
+extern "C" uint32_t StvAnotarIC(uint32_t pc, uint32_t sitio);
+
 // Un bloque dejo de ser valido en `pc`: su entrada no puede sobrevivirlo.
 // Barre TODOS los anchos y las DOS formas de indice: el ancho y la mezcla vivos
 // se fijan al generar el codigo, pero esta llamada puede llegar antes. Barrer de
