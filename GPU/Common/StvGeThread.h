@@ -89,51 +89,6 @@ inline std::recursive_mutex g_mu;
 // nada: un load relaxed y un branch predecible a frecuencia de syscall — el
 // comportamiento queda byte-identico a upstream. Con nivel > 0 serializa
 // contra la pasada del worker.
-// Profundidad de CandadoGe VIVOS en este hilo. La cesion en frontera de lista
-// solo es segura si el unico tenedor del candado es el lock de la pasada del
-// worker; si hubiera un CandadoGe anidado, soltar una vez no liberaria nada
-// (g_mu es recursivo) y ademas romperia su invariante. Con el contador en 0 la
-// cesion es correcta por construccion, no por inspeccion.
-inline thread_local int g_candadosVivos = 0;
-
-// Cuantos hilos estan BLOQUEADOS esperando g_mu ahora mismo. Lo usa la cesion
-// en frontera de lista para no pagar un sched_yield por lista cuando no hay
-// nadie a quien cederle: con la cola vacia, ceder es puro costo.
-inline std::atomic<int> g_esperandoGe{0};
-
-class CandadoGe {
-public:
-	// STV_MEDIDOR_ESPERAS_v1: la ranura dice QUE sitio del cuadro esta
-	// esperando el candado. Default R_CAND_OTRO para no tocar los ~30 sitios
-	// que no interesan; los del camino del cuadro pasan la suya. Con el
-	// medidor apagado esto es un load relaxed y una rama predecible mas.
-	explicit CandadoGe(stvmed::Ranura ranura = stvmed::R_CAND_OTRO) : tomado_(NivelActivo() != 0) {
-		if (tomado_) {
-			rastro_.emplace(kCandGe, "CandadoGe");
-			stvmed::Cronometro c(ranura);
-			g_esperandoGe.fetch_add(1, std::memory_order_relaxed);
-			g_mu.lock();
-			g_esperandoGe.fetch_sub(1, std::memory_order_relaxed);
-			++g_candadosVivos;
-		}
-	}
-	~CandadoGe() {
-		if (tomado_) {
-			--g_candadosVivos;
-			g_mu.unlock();
-			rastro_.reset();
-		}
-	}
-	CandadoGe(const CandadoGe &) = delete;
-	CandadoGe &operator=(const CandadoGe &) = delete;
-
-private:
-	bool tomado_;
-	std::optional<RastreoCandado> rastro_;   // orden de candados
-};
-
-// --- API del modulo (implementada en StvGeThread.cpp) ------------------------
-
 // --- RASTREADOR DE ORDEN DE CANDADOS -----------------------------------------
 //
 // POR QUE EXISTE. El refactor del candado fino colgo la consola cuatro veces.
@@ -201,6 +156,51 @@ public:
 private:
 	int id_;
 };
+
+// Profundidad de CandadoGe VIVOS en este hilo. La cesion en frontera de lista
+// solo es segura si el unico tenedor del candado es el lock de la pasada del
+// worker; si hubiera un CandadoGe anidado, soltar una vez no liberaria nada
+// (g_mu es recursivo) y ademas romperia su invariante. Con el contador en 0 la
+// cesion es correcta por construccion, no por inspeccion.
+inline thread_local int g_candadosVivos = 0;
+
+// Cuantos hilos estan BLOQUEADOS esperando g_mu ahora mismo. Lo usa la cesion
+// en frontera de lista para no pagar un sched_yield por lista cuando no hay
+// nadie a quien cederle: con la cola vacia, ceder es puro costo.
+inline std::atomic<int> g_esperandoGe{0};
+
+class CandadoGe {
+public:
+	// STV_MEDIDOR_ESPERAS_v1: la ranura dice QUE sitio del cuadro esta
+	// esperando el candado. Default R_CAND_OTRO para no tocar los ~30 sitios
+	// que no interesan; los del camino del cuadro pasan la suya. Con el
+	// medidor apagado esto es un load relaxed y una rama predecible mas.
+	explicit CandadoGe(stvmed::Ranura ranura = stvmed::R_CAND_OTRO) : tomado_(NivelActivo() != 0) {
+		if (tomado_) {
+			rastro_.emplace(kCandGe, "CandadoGe");
+			stvmed::Cronometro c(ranura);
+			g_esperandoGe.fetch_add(1, std::memory_order_relaxed);
+			g_mu.lock();
+			g_esperandoGe.fetch_sub(1, std::memory_order_relaxed);
+			++g_candadosVivos;
+		}
+	}
+	~CandadoGe() {
+		if (tomado_) {
+			--g_candadosVivos;
+			g_mu.unlock();
+			rastro_.reset();
+		}
+	}
+	CandadoGe(const CandadoGe &) = delete;
+	CandadoGe &operator=(const CandadoGe &) = delete;
+
+private:
+	bool tomado_;
+	std::optional<RastreoCandado> rastro_;   // orden de candados
+};
+
+// --- API del modulo (implementada en StvGeThread.cpp) ------------------------
 
 // --- CANDADO FINO DE LA CONTABILIDAD DE LISTAS (valvula debug.stv.dlfino) ----
 //
