@@ -547,7 +547,15 @@ static int ResolverCederCmd() {
 	if (__system_property_get("debug.stv.ceder.cmd", prop) > 0 && prop[0])
 		return (prop[0] >= '1' && prop[0] <= '9') ? 1 : 0;
 #endif
-	return 0;
+	// ENCENDIDA POR DEFECTO desde f25. Ranura 5, 4 corridas por lado:
+	//   apagada:  51,6 · 57,7 · 47,5 · 58,2   mediana 54,1  p95 43,5  %bajo50 47,3
+	//   encendida: 59,9 · 59,9 · 59,9 · 59,9  mediana 59,9  p95 50,0  %bajo50  4,6
+	// Las cuatro encendidas dan el TECHO, planas. Y la espera que ataca cae de
+	// 5,52 ms a ~1 ms por cuadro.
+	// Regresion en la ranura 4: mediana igual (58,7 -> 58,3) y la COLA mejora
+	// (p95 52,0 -> 55,2, minimo 50,8 -> 54,6). Cero caidas, cero colisiones.
+	// Se apaga con: setprop debug.stv.ceder.cmd 0
+	return 1;
 }
 
 void CederEnComando() {
