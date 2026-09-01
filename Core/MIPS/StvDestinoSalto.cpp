@@ -28,7 +28,12 @@ uint64_t g_fallos;
 
 alignas(64) SitioIC g_icSitios[kSitiosICMax];
 uint64_t g_icVia0, g_icVia1, g_icFallo;
+uint64_t g_lineaFallos, g_lineaParches, g_lineaCongelados;
+FnOlvidarPc g_alOlvidarPc;
+FnReiniciar g_alReiniciar;
 static int s_icModo;
+static int s_lineaModo;
+
 static int s_icProximo;   // se reparte al compilar; se reinicia con la cache
 
 static bool s_leido;
@@ -55,6 +60,8 @@ static void LeerValvula() {
 		s_modo = atoi(v);
 	if (__system_property_get("debug.stv.ic", v) > 0 && v[0])
 		s_icModo = atoi(v);
+	if (__system_property_get("debug.stv.iclinea", v) > 0 && v[0])
+		s_lineaModo = atoi(v);
 	if (__system_property_get("debug.stv.destino.mezcla", v) > 0 && v[0])
 		s_mezcla = atoi(v);
 	if (__system_property_get("debug.stv.destino.bits", v) > 0 && v[0]) {
@@ -73,6 +80,7 @@ int ModoCache() { LeerValvula(); return s_modo; }
 int BitsCache() { LeerValvula(); return s_bits; }
 int MezclaCache() { LeerValvula(); return s_mezcla; }
 int ModoIC() { LeerValvula(); return s_icModo; }
+int ModoLinea() { LeerValvula(); return s_lineaModo; }
 
 int SiguienteSitioIC() {
 	// Si se pasa, se reusa el ultimo: la medicion queda algo sucia en la cola
@@ -102,6 +110,12 @@ extern "C" uint32_t StvAnotarIC(uint32_t pc, uint32_t sitio) {
 }
 
 void OlvidarTodos() {
+	// Se avisa ANTES de nada: esto corre al principio de IRBlockCache::Clear,
+	// o sea antes del bucle que destruye bloque por bloque. Vaciando aca el
+	// registro de sitios, los OlvidarDestino de ese bucle no encuentran nada y
+	// no se ponen a parchear codigo que esta por desaparecer igual.
+	if (g_alReiniciar)
+		g_alReiniciar();
 	memset(g_destinos, 0xFF, sizeof(g_destinos));
 	// Los sitios se recompilan desde cero, asi que los indices se reparten de
 	// nuevo: sin reiniciar, dos sitios distintos comparten ranura y la medicion
@@ -111,6 +125,10 @@ void OlvidarTodos() {
 }
 
 void OlvidarDestino(uint32_t pc) {
+	// Un sitio de la cache en linea que prediga este pc saltaria a la
+	// traduccion vieja: hay que despredecirlo.
+	if (g_alOlvidarPc)
+		g_alOlvidarPc(pc);
 	// Se limpia en TODOS los anchos posibles: el ancho vivo se fija al generar
 	// el codigo, pero esta llamada puede llegar antes de eso. Barrer de mas es
 	// gratis; barrer de menos deja una entrada que apunta a codigo liberado.
@@ -135,6 +153,18 @@ void VolcarTestigo(const char *motivo) {
 				motivo, 100.0 * (double)d0 / (double)dt,
 				100.0 * (double)(d0 + d1) / (double)dt,
 				(unsigned long long)dt, s_icProximo);
+	}
+	if (s_lineaModo > 0) {
+		static uint64_t uf, up, uc;
+		uint64_t df = g_lineaFallos - uf, dp = g_lineaParches - up;
+		uf = g_lineaFallos; up = g_lineaParches; uc = g_lineaCongelados;
+		// La tasa se calcula contra los saltos indirectos por segundo que midio
+		// debug.stv.ic en esta misma escena. Si la escena cambia, cambiar esto.
+		const double kSaltosPorSeg = 4700000.0;
+		STV_LOG("STVLINEA[%s]: fallos/s=%llu (~%.1f %% de acierto)  parches/s=%llu  congelados=%llu",
+			motivo, (unsigned long long)df,
+			100.0 * (1.0 - (double)df / kSaltosPorSeg),
+			(unsigned long long)dp, (unsigned long long)uc);
 	}
 	uint64_t t = g_aciertos + g_fallos;
 	if (!t)

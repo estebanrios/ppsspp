@@ -25,6 +25,10 @@
 #include <vector>
 #include "Common/Arm64Emitter.h"
 #include "Core/MIPS/IR/IRJit.h"
+#include <functional>
+#include <unordered_map>
+#include <vector>
+
 #include "Core/MIPS/IR/IRNativeCommon.h"
 #include "Core/MIPS/JitCommon/JitState.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
@@ -71,6 +75,42 @@ private:
 
 	void WriteConstExit(uint32_t pc);
 	void OverwriteExit(int srcOffset, int len, int block_num) override;
+
+	// ---- CACHE EN LINEA para las salidas indirectas (jr $ra y compania) ----
+	//
+	// El destino previsto vive como INMEDIATO en el propio flujo de
+	// instrucciones del sitio, no en una tabla: comparar sale CERO cargas de
+	// datos. Esa es la unica forma de ganar aca — una tabla en memoria quedo
+	// refutada (95,2 % de aciertos y aun asi -1,7 %, porque cambiaba un acceso
+	// a L2 por otro). Medido antes de escribir esto: el 75,6 % de los saltos
+	// indirectos van al mismo destino que la vez anterior DESDE EL MISMO SITIO,
+	// y 89,0 % si se guardan dos. Son 4,7 M de saltos/s sobre 2.931 sitios.
+	//
+	// Se salta a la ENTRADA VERIFICADA del bloque, que es lo mismo que ya hace
+	// el enlace de bloques para destinos constantes: esa entrada revisa el
+	// downcount ella misma y se fija el pc sola si expiro, asi que el camino de
+	// acierto no necesita guardar el pc.
+	struct StvSitioIC {
+		uint32_t pcPrevisto;   // el inmediato grabado ahora (0xFFFFFFFF = ninguno)
+		int offCond;           // el B.NE; al congelar se vuelve B incondicional
+		int offMovz;           // MOVZ (+4 el MOVK): el pc previsto
+		int offSalto;          // el B al destino
+		int offDirecto;        // adonde caer salteando la llamada al parcheador
+		uint8_t estado;        // 0 libre, 1 activo, 2 congelado
+		uint8_t reparches;
+	};
+	std::vector<StvSitioIC> stvSitios_;
+	std::unordered_multimap<uint32_t, int> stvPorPc_;
+
+	void StvEmitirSitioIC();               // al compilar una salida indirecta
+	void StvParchear(int sitio, uint32_t pc, int offsetDestino);
+	void StvCongelar(int sitio);
+	void StvEscribir(int offset, const std::function<void(Arm64Gen::ARM64XEmitter &)> &emitir, int instrs);
+public:
+	uint32_t StvFalloIC(uint32_t pc, int sitio);   // la llama el codigo generado
+	void StvOlvidarPcIC(uint32_t pc);              // un bloque dejo de valer
+	void StvReiniciarIC();                         // se limpio el bloque de codigo
+private:
 
 	void CompIR_Arith(IRInst inst) override;
 	void CompIR_Assign(IRInst inst) override;

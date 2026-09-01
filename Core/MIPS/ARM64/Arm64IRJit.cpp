@@ -26,6 +26,10 @@
 #include "Core/MIPS/ARM64/Arm64IRRegCache.h"
 
 #include <algorithm>
+
+// Lo usa el ayudante que llama el codigo generado en cada fallo de la cache
+// en linea, que es una funcion C y no tiene otra forma de llegar al backend.
+static Arm64JitBackend *g_stvBackend;
 // for std::min
 
 namespace MIPSComp {
@@ -53,12 +57,162 @@ Arm64JitBackend::Arm64JitBackend(JitOptions &jitopt, IRBlockCache &blocks)
 	AllocCodeSpace(1024 * 1024 * 16);
 
 	regs_.Init(this, &fp_);
+	g_stvBackend = this;
+	stvjit::g_alOlvidarPc = [](uint32_t pc) { if (g_stvBackend) g_stvBackend->StvOlvidarPcIC(pc); };
+	stvjit::g_alReiniciar = []() { if (g_stvBackend) g_stvBackend->StvReiniciarIC(); };
 }
 
 Arm64JitBackend::~Arm64JitBackend() {}
 
 void Arm64JitBackend::UpdateFCR31(MIPSState *mipsState) {
 	currentRoundingFunc_ = convertS0ToSCRATCH1_[mipsState->fcr31 & 3];
+}
+
+// ===========================================================================
+// CACHE EN LINEA para las salidas indirectas. Ver Arm64IRJit.h para el porque.
+// ===========================================================================
+// La llama el codigo generado cuando el destino previsto NO coincide. Devuelve
+// el pc porque la llamada pisa X0..X17 (SCRATCH1 incluido) y el sitio lo
+// necesita entero para caer al despachador.
+extern "C" uint32_t StvICFalloC(uint32_t pc, uint32_t sitio) {
+	++stvjit::g_lineaFallos;
+	if (!g_stvBackend)
+		return pc;
+	return g_stvBackend->StvFalloIC(pc, (int)sitio);
+}
+
+// Reescribe `instrs` instrucciones en el bloque de codigo, con el baile de
+// permisos y el vaciado de la cache de instrucciones. Mismo patron que usa
+// InvalidateBlock, que ya parchea codigo vivo en este backend.
+void Arm64JitBackend::StvEscribir(int offset, const std::function<void(ARM64XEmitter &)> &emitir, int instrs) {
+	const u8 *code = GetBasePtr() + offset;
+	u8 *writable = GetWritablePtrFromCodePtr(GetBasePtr()) + offset;
+	const int bytes = instrs * 4;
+	if (PlatformIsWXExclusive())
+		ProtectMemoryPages(writable, bytes, MEM_PROT_READ | MEM_PROT_WRITE);
+	ARM64XEmitter emitter(code, writable);
+	emitir(emitter);
+	emitter.FlushIcache();
+	if (PlatformIsWXExclusive())
+		ProtectMemoryPages(writable, bytes, MEM_PROT_READ | MEM_PROT_EXEC);
+}
+
+void Arm64JitBackend::StvParchear(int sitio, uint32_t pc, int offsetDestino) {
+	StvSitioIC &s = stvSitios_[sitio];
+	if (s.pcPrevisto != 0xFFFFFFFFu) {
+		auto r = stvPorPc_.equal_range(s.pcPrevisto);
+		for (auto it = r.first; it != r.second; ++it) {
+			if (it->second == sitio) { stvPorPc_.erase(it); break; }
+		}
+	}
+	// El inmediato SIEMPRE ocupa dos instrucciones (MOVZ+MOVK), pase lo que
+	// pase con el valor: MOVI2R elige el largo segun el numero y aca el hueco
+	// esta reservado de antemano.
+	StvEscribir(s.offMovz, [pc](ARM64XEmitter &e) {
+		e.MOVZ(W10, pc & 0xFFFF, SHIFT_0);
+		e.MOVK(W10, pc >> 16, SHIFT_16);
+	}, 2);
+	const u8 *destino = GetBasePtr() + offsetDestino;
+	StvEscribir(s.offSalto, [destino](ARM64XEmitter &e) { e.B(destino); }, 1);
+	s.pcPrevisto = pc;
+	stvPorPc_.emplace(pc, sitio);
+	++stvjit::g_lineaParches;
+}
+
+void Arm64JitBackend::StvCongelar(int sitio) {
+	StvSitioIC &s = stvSitios_[sitio];
+	// El B.NE pasa a ser un B incondicional al punto que ya saltea la llamada:
+	// el sitio deja de predecir Y deja de pagar la llamada en cada fallo.
+	const u8 *directo = GetBasePtr() + s.offDirecto;
+	StvEscribir(s.offCond, [directo](ARM64XEmitter &e) { e.B(directo); }, 1);
+	s.estado = 2;
+	++stvjit::g_lineaCongelados;
+}
+
+uint32_t Arm64JitBackend::StvFalloIC(uint32_t pc, int sitio) {
+	if (sitio < 0 || sitio >= (int)stvSitios_.size())
+		return pc;
+	StvSitioIC &s = stvSitios_[sitio];
+	if (s.estado != 1)
+		return pc;
+	// Un sitio que reparchea sin parar es polimorfico de verdad: seguir
+	// parcheandolo cuesta el parche Y la llamada en cada salto, y no acierta
+	// nunca. Se congela. El tope es alto a proposito: un sitio que acierta el
+	// 90 % tambien falla de vez en cuando y no hay que castigarlo por eso.
+	if (s.reparches >= 64) {
+		StvCongelar(sitio);
+		return pc;
+	}
+	int block_num = blocks_.GetBlockNumberFromStartAddress(pc);
+	if (block_num < 0)
+		return pc;
+	const IRNativeBlock *nb = GetNativeBlock(block_num);
+	if (!nb || nb->checkedOffset == 0)
+		return pc;   // todavia no esta compilado: que lo resuelva el despachador
+	++s.reparches;
+	StvParchear(sitio, pc, nb->checkedOffset);
+	return pc;
+}
+
+void Arm64JitBackend::StvOlvidarPcIC(uint32_t pc) {
+	// El bloque de `pc` dejo de valer. Un sitio que lo prediga saltaria a la
+	// traduccion vieja: hay que despredecirlo. Como el inmediato vuelve a
+	// 0xFFFFFFFF (desalineado, ningun pc real coincide), el sitio simplemente
+	// vuelve a fallar y se reparchea solo.
+	auto r = stvPorPc_.equal_range(pc);
+	if (r.first == r.second)
+		return;
+	std::vector<int> sitios;
+	for (auto it = r.first; it != r.second; ++it)
+		sitios.push_back(it->second);
+	stvPorPc_.erase(pc);
+	for (int sitio : sitios) {
+		StvSitioIC &s = stvSitios_[sitio];
+		s.pcPrevisto = 0xFFFFFFFFu;
+		StvEscribir(s.offMovz, [](ARM64XEmitter &e) {
+			e.MOVZ(W10, 0xFFFF, SHIFT_0);
+			e.MOVK(W10, 0xFFFF, SHIFT_16);
+		}, 2);
+	}
+}
+
+void Arm64JitBackend::StvEmitirSitioIC() {
+	const int sitio = (int)stvSitios_.size();
+	stvSitios_.push_back(StvSitioIC{});
+	StvSitioIC &s = stvSitios_[sitio];
+	s.pcPrevisto = 0xFFFFFFFFu;   // desalineado: ningun pc real coincide
+	s.estado = 1;
+	s.reparches = 0;
+
+	// El inmediato se emite SIEMPRE como MOVZ+MOVK, aunque el valor entre en
+	// una sola: el hueco tiene que ser de tamaño fijo para poder reescribirlo
+	// despues con cualquier pc.
+	s.offMovz = (int)GetOffset(GetCodePointer());
+	MOVZ(W10, 0xFFFF, SHIFT_0);
+	MOVK(W10, 0xFFFF, SHIFT_16);
+	CMP(SCRATCH1, W10);
+	s.offCond = (int)GetOffset(GetCodePointer());
+	FixupBranch fallo = B(CC_NEQ);
+		// Hueco del salto al destino previsto. Arranca apuntando al despachador
+		// —nunca se ejecuta mientras el inmediato sea 0xFFFFFFFF— y el parcheo
+		// lo reescribe como B a la entrada verificada del bloque destino.
+		s.offSalto = (int)GetOffset(GetCodePointer());
+		B(dispatcherPCInSCRATCH1_);
+	SetJumpTarget(fallo);
+	MOV(W0, SCRATCH1);
+	MOVI2R(W1, (u32)sitio);
+	QuickCallFunction(SCRATCH1_64, &StvICFalloC);
+	MOV(SCRATCH1, W0);
+	// Al congelar, el B.NE de arriba pasa a saltar aca: el sitio deja de
+	// predecir y ademas deja de pagar la llamada.
+	s.offDirecto = (int)GetOffset(GetCodePointer());
+}
+
+void Arm64JitBackend::StvReiniciarIC() {
+	// El bloque de codigo entero se va: los sitios no existen mas. No hay nada
+	// que despredecir, solo que olvidar.
+	stvSitios_.clear();
+	stvPorPc_.clear();
 }
 
 static void NoBlockExits() {
@@ -317,6 +471,7 @@ bool Arm64JitBackend::DescribeCodePtr(const u8 *ptr, std::string &name) const {
 }
 
 void Arm64JitBackend::ClearAllBlocks() {
+	StvReiniciarIC();
 	ClearCodeSpace(jitStartOffset_);
 	FlushIcacheSection(region + jitStartOffset_, region + region_size - jitStartOffset_);
 	EraseAllLinks(-1);

@@ -107,6 +107,28 @@ int SiguienteSitioIC();        // indice para el sitio que se esta compilando
 // son PROPORCIONES, y no dependen de la velocidad.
 extern "C" uint32_t StvAnotarIC(uint32_t pc, uint32_t sitio);
 
+// ---------------------------------------------------------------------------
+// CACHE EN LINEA (debug.stv.iclinea): 0 apagada, 1 encendida.
+// La implementacion vive en el backend ARM64 porque parchea codigo. Aca solo la
+// valvula y los contadores, para que el latido de una vez por segundo los vea.
+//
+// No hay contador de aciertos en el camino rapido A PROPOSITO: contarlos
+// costaria una lectura y una escritura de memoria por acierto, que es
+// exactamente lo que este diseño existe para evitar. Se cuentan los FALLOS, que
+// ya pagan una llamada, y la tasa sale contra el total de saltos indirectos que
+// midio debug.stv.ic (4,7 M/s en la escena de referencia).
+int ModoLinea();
+
+// El backend ARM64 se registra aca: la invalidacion vive en codigo compartido
+// (IRJit.cpp) pero despredecir un sitio exige parchear codigo, que es cosa del
+// backend. Punteros y no llamadas directas para no meter dependencia del
+// backend en el codigo comun.
+typedef void (*FnOlvidarPc)(uint32_t pc);
+typedef void (*FnReiniciar)();
+extern FnOlvidarPc g_alOlvidarPc;
+extern FnReiniciar g_alReiniciar;
+extern uint64_t g_lineaFallos, g_lineaParches, g_lineaCongelados;
+
 // Un bloque dejo de ser valido en `pc`: su entrada no puede sobrevivirlo.
 // Barre TODOS los anchos y las DOS formas de indice: el ancho y la mezcla vivos
 // se fijan al generar el codigo, pero esta llamada puede llegar antes. Barrer de

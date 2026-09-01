@@ -62,6 +62,8 @@ void Arm64JitBackend::CompIR_Exit(IRInst inst) {
 			QuickCallFunction(SCRATCH1_64, &stvjit::StvAnotarIC);
 			MOV(SCRATCH1, W0);
 		}
+		if (stvjit::ModoLinea() > 0)
+			StvEmitirSitioIC();
 		B(dispatcherPCInSCRATCH1_);
 		break;
 
