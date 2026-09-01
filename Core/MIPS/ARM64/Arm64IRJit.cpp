@@ -23,6 +23,7 @@
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPSTables.h"
 #include "Core/MIPS/ARM64/Arm64IRJit.h"
+#include "Core/MIPS/StvDestinoSalto.h"
 #include "Core/MIPS/ARM64/Arm64IRRegCache.h"
 
 #include <algorithm>
