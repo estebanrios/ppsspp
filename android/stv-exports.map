@@ -8,12 +8,15 @@
  *
  * Este guion las devuelve sin tocar 41 declaraciones: Java las encuentra, y
  * todo lo demas queda interno.
+ *
+ * SOLO COMODINES, a proposito. Un nombre exacto que no exista es un ERROR de
+ * enlace ("version script assignment failed: symbol not defined"), y JNI_OnUnload
+ * no esta definido en este arbol. Los patrones no fallan si no hay coincidencia.
  */
 {
   global:
     Java_*;
-    JNI_OnLoad;
-    JNI_OnUnload;
+    JNI_*;
   local:
     *;
 };
