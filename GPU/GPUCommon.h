@@ -16,6 +16,7 @@
 
 #if defined(__ANDROID__)
 #include <atomic>
+#include "GPU/Common/StvGeThread.h"
 #endif
 
 // X11, sigh.
@@ -57,7 +58,11 @@ public:
 	// FinishInitOnMainThread runs on the main thread, of course.
 	virtual void FinishInitOnMainThread() {}
 
-	virtual ~GPUCommon() {}
+	virtual ~GPUCommon() {
+		// El puntero no puede sobrevivir al objeto: el worker podria aplicar una
+		// limpieza sobre un GPUCommon ya destruido.
+		stvge::g_alLimpiarLista = nullptr;
+	}
 
 	Draw::DrawContext *GetDrawContext() {
 		return draw_;
@@ -423,6 +428,11 @@ protected:
 
 	std::vector<std::pair<int, int>> restrictPrimRanges_;
 	std::string restrictPrimRule_;
+
+	// La aplica el WORKER al terminar su pasada, con el candado grueso tomado:
+	// es el mismo punto donde el camino bloqueante habria continuado. Ver
+	// DiferirLimpiezaLista en StvGeThread.h.
+	void StvAplicarLimpiezaLista(int listid);
 
 private:
 	void DoExecuteCall(u32 target);

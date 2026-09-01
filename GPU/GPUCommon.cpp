@@ -63,6 +63,14 @@ GPUCommon::GPUCommon(GraphicsContext *gfxCtx, Draw::DrawContext *draw) :
 
 	PPGeSetDrawContext(draw);
 	ResetMatrices();
+
+	// El worker aplica por aca las limpiezas de lista que el EmuThread encolo
+	// en vez de esperar el candado. Se suelta en el destructor: un puntero que
+	// sobrevive a su objeto ya costo un SIGSEGV hoy.
+	stvge::g_alLimpiarLista = [](int listid) {
+		if (gpu)
+			gpu->StvAplicarLimpiezaLista(listid);
+	};
 }
 
 void GPUCommon::BeginHostFrame(const DisplayLayoutConfig &config) {
@@ -1631,6 +1639,26 @@ void GPUCommon::InterruptStart(int listid) {
 	interruptRunning = true;
 }
 
+void GPUCommon::StvAplicarLimpiezaLista(int listid) {
+	// Corre EN el worker, al terminar la pasada, con g_mu tomado. Se revalida
+	// todo: entre que se encolo y ahora el estado pudo cambiar — de hecho lo
+	// normal es que cambie, que es justo el motivo por el que esperar no servia.
+	stvge::CandadoDL zonaDL("LimpiezaDiferida");
+	DisplayList &dl = dls[listid];
+	if (dl.state != PSP_GE_DL_STATE_COMPLETED && dl.state != PSP_GE_DL_STATE_NONE)
+		return;
+	if (dl.started && dl.context.IsValid()) {
+		gstate.Restore(dl.context);
+		ReapplyGfxState();
+	}
+	if (!dlQueue.empty()) {
+		if (listid == dlQueue.front())
+			PopDLQueue();
+		else
+			dlQueue.remove(listid);
+	}
+}
+
 void GPUCommon::InterruptEnd(int listid) {
 	// STV_GE_THREAD_v1: toca dls[], la cola y puede restaurar contexto
 	// (gstate.Restore + ReapplyGfxState) mientras el worker corre otra lista.
@@ -1655,11 +1683,19 @@ void GPUCommon::InterruptEnd(int listid) {
 	}
 	std::optional<stvge::RastreoCandado> rastroVivo;
 	std::unique_lock<std::recursive_mutex> candadoGe(stvge::g_mu, std::defer_lock);
+	bool diferido = false;
 	if (necesitaGrueso && stvge::NivelActivo() != 0) {
-		stvge::RastreoCandado rastro(stvge::kCandGe, "InterruptEnd::grueso");
-		stvmed::Cronometro c(stvmed::R_CAND_INTERRUPT);
-		candadoGe.lock();
-		rastroVivo.emplace(stvge::kCandGe, "InterruptEnd::grueso-vivo");
+		// PRIMERO intentar diferir. Esperar aca cuesta 3,0 ms de un cuadro de
+		// 19,4 —una pasada entera del worker— y al llegar, en las 2.558
+		// llamadas medidas, no habia NADA que hacer: pop=0, conGpu=0. Encolar
+		// da el mismo orden sin la parada.
+		diferido = stvge::DiferirLimpiezaLista(listid);
+		if (!diferido) {
+			stvge::RastreoCandado rastro(stvge::kCandGe, "InterruptEnd::grueso");
+			stvmed::Cronometro c(stvmed::R_CAND_INTERRUPT);
+			candadoGe.lock();
+			rastroVivo.emplace(stvge::kCandGe, "InterruptEnd::grueso-vivo");
+		}
 	}
 	stvge::CandadoDL zonaDL("InterruptEnd");   // contabilidad de listas
 	interruptRunning = false;
@@ -1674,7 +1710,7 @@ void GPUCommon::InterruptEnd(int listid) {
 	stvge::g_intrEndTotal.fetch_add(1, std::memory_order_relaxed);
 	if (dl.state == PSP_GE_DL_STATE_COMPLETED || dl.state == PSP_GE_DL_STATE_NONE) {
 		stvge::g_intrEndCompletada.fetch_add(1, std::memory_order_relaxed);
-		if (dl.started && dl.context.IsValid()) {
+		if (!diferido && dl.started && dl.context.IsValid()) {
 			stvge::g_intrEndConGpu.fetch_add(1, std::memory_order_relaxed);
 			gstate.Restore(dl.context);
 			ReapplyGfxState();
@@ -1683,7 +1719,7 @@ void GPUCommon::InterruptEnd(int listid) {
 		__GeTriggerWait(GPU_SYNC_LIST, listid);
 
 		// Make sure the list isn't still queued since it's now completed.
-		if (!dlQueue.empty()) {
+		if (!diferido && !dlQueue.empty()) {
 			stvge::g_intrEndPop.fetch_add(1, std::memory_order_relaxed);
 			if (listid == dlQueue.front())
 				PopDLQueue();

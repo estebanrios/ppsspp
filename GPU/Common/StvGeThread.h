@@ -401,6 +401,29 @@ void ProbarTestigoDL();
 // en 0). Con la valvula en 0 devuelve false SIEMPRE: upstream exacto.
 bool DiferirInvalidacion(uint32_t addr, int size, int type);
 
+// --- Limpieza de lista diferida ---------------------------------------------
+//
+// MISMO PATRON que DiferirInvalidacion, y por la misma razon medida. En
+// InterruptEnd el EmuThread pedia el candado GRUESO por si tenia que restaurar
+// contexto de GPU o sacar la lista de la cola. Medido en la ranura 4 con el
+// candado fino puesto: 2.558 llamadas con pop=0 y conGpu=0 — o sea que ninguna
+// de las dos ramas se ejecuto NI UNA VEZ, y aun asi el candado se tomaba una vez
+// por cuadro y costaba 3,0 ms de los 19,4 del cuadro.
+//
+// La prediccion no estaba mal: LA ESPERA MISMA la invalida. La cola tiene algo
+// cuando se decide, y el worker la vacia durante los 3 ms que tarda en
+// conseguirse el candado. Cuando por fin lo consigue, ya no hay nada que hacer.
+//
+// Encolar la limpieza da EL MISMO ORDEN sin la parada: el worker la aplica al
+// terminar la pasada, que es exactamente donde el camino bloqueante habria
+// continuado. Es el patron que llevo Spiderman 3 de 39,0 a 59,8 VPS.
+bool DiferirLimpiezaLista(int listid);
+
+typedef void (*FnLimpiarLista)(int listid);
+extern FnLimpiarLista g_alLimpiarLista;
+inline std::atomic<uint64_t> g_limpiezasDiferidas{0};
+inline std::atomic<uint64_t> g_limpiezasDirectas{0};
+
 // --- Cesion en frontera de lista (valvula debug.stv.ceder) -------------------
 //
 // EL PROBLEMA MEDIDO (Spiderman 3, escena del incendio grande, ranura 3): en

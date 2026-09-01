@@ -253,6 +253,7 @@ static void AfinidadCluster(bool soloGrandes) {
 static std::unique_lock<std::recursive_mutex> *g_lockPasada = nullptr;
 
 static void DrenarInvalidaciones();
+static void DrenarLimpiezas();
 
 static void WorkerMain() {
 	SetCurrentThreadName("STVGeWorker");
@@ -306,6 +307,9 @@ static void WorkerMain() {
 			// tenia el camino bloqueante (la invalidacion caia despues de la
 			// pasada), sin la parada del EmuThread.
 			DrenarInvalidaciones();
+			// Misma ventana y misma razon: con g_mu todavia tomado, aplicar lo
+			// que el EmuThread encolo para no quedarse esperando esta pasada.
+			DrenarLimpiezas();
 		}
 		g_pasadas.fetch_add(1, std::memory_order_relaxed);
 
@@ -425,6 +429,55 @@ static void DrenarInvalidaciones() {
 		gpu->InvalidateCache(i.addr, i.size, (GPUInvalidationType)i.type);
 }
 
+
+// --- Limpieza de lista diferida (ver el porque en StvGeThread.h) -------------
+static std::mutex g_muLimpieza;
+static std::vector<int> g_limpiezaPend;
+FnLimpiarLista g_alLimpiarLista = nullptr;
+inline constexpr size_t kMaxLimpieza = 64;
+
+bool DiferirLimpiezaLista(int listid) {
+	if (NivelActivo() == 0 || !g_alLimpiarLista)
+		return false;
+	// Solo vale diferir si el que retiene el candado es una PASADA del worker:
+	// es la unica que lo tiene milisegundos. Cualquier otro lo suelta enseguida
+	// y ahi bloquear sale mas barato que encolar.
+	{
+		RastreoCandado rastroCola(kCandCola, "g_muCola");
+		std::lock_guard<std::mutex> lk(g_muCola);
+		if (!g_corriendo)
+			return false;
+	}
+	// try_lock sobre el recursivo: si este hilo ya lo tiene, o esta libre, el
+	// camino normal es lo correcto — no hay a quien esperar.
+	if (g_mu.try_lock()) {
+		g_mu.unlock();
+		g_limpiezasDirectas.fetch_add(1, std::memory_order_relaxed);
+		return false;
+	}
+	{
+		std::lock_guard<std::mutex> lk(g_muLimpieza);
+		if (g_limpiezaPend.size() >= kMaxLimpieza)
+			return false;   // desbordada: mejor bloquear que perder la limpieza
+		g_limpiezaPend.push_back(listid);
+	}
+	g_limpiezasDiferidas.fetch_add(1, std::memory_order_relaxed);
+	return true;
+}
+
+static void DrenarLimpiezas() {
+	std::vector<int> lote;
+	{
+		std::lock_guard<std::mutex> lk(g_muLimpieza);
+		if (g_limpiezaPend.empty())
+			return;
+		lote.swap(g_limpiezaPend);
+	}
+	if (!g_alLimpiarLista)
+		return;
+	for (int id : lote)
+		g_alLimpiarLista(id);
+}
 
 // --- Cesion en frontera de lista ---------------------------------------------
 //
@@ -816,17 +869,19 @@ void PorVblank() {
 #endif
 		if (++g_dlAnuncio >= kInvalAnuncioCada) {
 			g_dlAnuncio = 0;
-			char b[176];
+			char b[240];
 			const char *sChoque = g_choqueSitio.load(std::memory_order_relaxed);
 			const char *sDuenio = g_choqueDueñoSitio.load(std::memory_order_relaxed);
 			snprintf(b, sizeof(b),
-				"STV: dl ciclos=%llu intrEnd=%llu compl=%llu pop=%llu conGpu=%llu fino=%d entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
+				"STV: dl ciclos=%llu intrEnd=%llu compl=%llu pop=%llu conGpu=%llu fino=%d limpDif=%llu limpDir=%llu entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
 				(unsigned long long)g_ciclos.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndTotal.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndCompletada.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndPop.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndConGpu.load(std::memory_order_relaxed),
 				g_dlFino,
+				(unsigned long long)g_limpiezasDiferidas.load(std::memory_order_relaxed),
+				(unsigned long long)g_limpiezasDirectas.load(std::memory_order_relaxed),
 				(unsigned long long)g_entradasDL.load(std::memory_order_relaxed),
 				(unsigned long long)g_colisionesDL.load(std::memory_order_relaxed),
 				g_picoDL.load(std::memory_order_relaxed),
