@@ -260,12 +260,21 @@ void Arm64JitBackend::StvEmitirSitioIC() {
 }
 
 void Arm64JitBackend::StvVolcarMapa() {
-	if (stvMapa_.empty())
+	// /data/local/tmp es de shell (drwxrwx--x): la app puede atravesarlo pero
+	// NO escribir, y fopen fallaba en silencio — el archivo no aparecia y no
+	// habia forma de saber por que. Va al directorio privado de la app, y
+	// cualquier fallo se avisa.
+	static const char *kRuta = "/data/data/org.ppsspp.ppsspp/stv_irmapa.txt";
+	if (stvMapa_.empty()) {
+		stvjit::AvisarMapa(-1);
 		return;
+	}
 	std::sort(stvMapa_.begin(), stvMapa_.end());
-	FILE *f = fopen("/data/local/tmp/stv_irmapa.txt", "w");
-	if (!f)
+	FILE *f = fopen(kRuta, "w");
+	if (!f) {
+		stvjit::AvisarMapa(-2);
 		return;
+	}
 	// La base va en la primera linea: el perfil trae direcciones absolutas y
 	// sin ella no se pueden convertir a offsets (la aleatorizacion mueve todo).
 	fprintf(f, "base %p\n", (const void *)GetBasePtr());

@@ -102,7 +102,15 @@ int ModoIC() { LeerValvula(); return s_icModo; }
 int ModoLinea() { LeerValvula(); return s_lineaModo; }
 int ModoRepliegue() { LeerValvula(); return s_repliegueModo; }
 int ModoMapa() { LeerValvula(); return s_mapaModo; }
-void AvisarMapa(int n) { STV_LOG("STVIRMAPA: %d entradas en /data/local/tmp/stv_irmapa.txt", n); }
+void AvisarMapa(int n) {
+	// Un instrumento que falla callado no es un instrumento: cada camino avisa.
+	if (n == -1)
+		STV_LOG("STVIRMAPA: el mapa esta VACIO (¿se leyo la valvula despues de compilar?)");
+	else if (n == -2)
+		STV_LOG("STVIRMAPA: NO se pudo abrir el archivo para escribir");
+	else
+		STV_LOG("STVIRMAPA: %d entradas en /data/data/org.ppsspp.ppsspp/stv_irmapa.txt", n);
+}
 
 void VolcarRepliegue() {
 	// Se informa el TRAMO del ultimo segundo, no el acumulado: el arranque
