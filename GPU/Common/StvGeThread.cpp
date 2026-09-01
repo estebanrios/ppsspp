@@ -544,7 +544,12 @@ static uint32_t g_dlFinoRevision = 0;
 // colisiones en 276.468 entradas con el candado grueso), y que el camino comun
 // de InterruptEnd es contabilidad pura (16.638 llamadas: pop=0, conGpu=0).
 // Retomar desde aca con un rastreador de orden de candados, no a ojo.
-bool DLFinoActivo() { return g_dlFino != 0; }   // el rastreador necesita poder entrar al camino que cuelga
+// CLAVADA EN 0. Estado al 2026-08-31: el ORDEN de candados quedo limpio (el
+// rastreador reporta 0 ciclos con la valvula encendida), pero el camino de dos
+// fases lanza std::system_error desde GeIntrHandler::handleResult — un unlock
+// sobre un candado que no se posee, o un lock sobre uno ya tomado. Es un error
+// de LOGICA mio, no de orden, y hay que corregirlo antes de volver a encenderla.
+bool DLFinoActivo() { return false; }
 
 static int ResolverDLFino() {
 	const char *e = getenv("STV_GE_DLFINO");
