@@ -35,7 +35,13 @@ static void LeerValvula() {
 	if (s_leido)
 		return;
 	s_leido = true;
-	s_modo = 1;
+	// APAGADA POR DEFECTO. Medida: cuesta 1,7 % (53,3 -> 52,4 VPS). Con 95,2 %
+	// de aciertos el mecanismo no falla: es que cambia un acceso a L2 por otro
+	// acceso a L2 mas 5 instrucciones, y a 4,9 M de despachos por segundo esas
+	// instrucciones solas ya son ~1 % del reloj. Queda con valvula porque los
+	// contadores (tasa y despachos/s) son el instrumento para el proximo
+	// intento, que tiene que sacar el acceso a memoria, no mudarlo.
+	s_modo = 0;
 	s_bits = 11;   // 2048 entradas = 16 KB
 	s_mezcla = 0;
 #ifdef __ANDROID__
