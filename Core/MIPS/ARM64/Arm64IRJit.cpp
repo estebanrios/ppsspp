@@ -30,7 +30,7 @@
 
 // Lo usa el ayudante que llama el codigo generado en cada fallo de la cache
 // en linea, que es una funcion C y no tiene otra forma de llegar al backend.
-static Arm64JitBackend *g_stvBackend;
+static MIPSComp::Arm64JitBackend *g_stvBackend;
 // for std::min
 
 namespace MIPSComp {
