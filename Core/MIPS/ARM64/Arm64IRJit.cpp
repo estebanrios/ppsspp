@@ -152,6 +152,18 @@ void Arm64JitBackend::StvCongelar(int sitio) {
 	++stvjit::g_lineaCongelados;
 }
 
+void Arm64JitBackend::StvFijar(int sitio) {
+	StvSitioIC &s = stvSitios_[sitio];
+	// EL COSTO DOMINANTE ERA LA LLAMADA, no el parcheo ni la tasa de acierto.
+	// Medido: limitar solo el parcheo dejo 1,35 M de llamadas por segundo en el
+	// camino de fallo y costo -10,7 %. Aca el B.NE pasa a saltar DIRECTO al
+	// despachador, salteando la llamada: el sitio conserva su prediccion y su
+	// camino de acierto, y un fallo cuesta cinco instrucciones y nada mas.
+	const u8 *directo = GetBasePtr() + s.offDirecto;
+	StvEscribir(s.offCond, [directo](ARM64XEmitter &e) { e.B(CC_NEQ, directo); }, 1);
+	s.estado = 3;
+}
+
 uint32_t Arm64JitBackend::StvFalloIC(uint32_t pc, int sitio) {
 	if (sitio < 0 || sitio >= (int)stvSitios_.size())
 		return pc;
@@ -162,18 +174,7 @@ uint32_t Arm64JitBackend::StvFalloIC(uint32_t pc, int sitio) {
 	// parcheandolo cuesta el parche Y la llamada en cada salto, y no acierta
 	// nunca. Se congela. El tope es alto a proposito: un sitio que acierta el
 	// 90 % tambien falla de vez en cuando y no hay que castigarlo por eso.
-	if (s.reparches >= stvjit::TopeLinea()) {
-		StvCongelar(sitio);
-		return pc;
-	}
-	// NO se reparchea en cada fallo. Medido: con reparche en cada fallo son
-	// 1,14 M de parches por segundo, y cada parche vacia la cache de
-	// instrucciones. Un sitio sin prediccion se parchea enseguida —es gratis
-	// acertar— y uno que ya predice solo cada N fallos, que alcanza de sobra
-	// para seguir un cambio de fase y no cuesta casi nada.
 	++s.fallos;
-	if (s.pcPrevisto != 0xFFFFFFFFu && (s.fallos % (uint32_t)stvjit::CadaLinea()) != 0)
-		return pc;
 	int block_num = blocks_.GetBlockNumberFromStartAddress(pc);
 	if (block_num < 0)
 		return pc;
@@ -182,6 +183,11 @@ uint32_t Arm64JitBackend::StvFalloIC(uint32_t pc, int sitio) {
 		return pc;   // todavia no esta compilado: que lo resuelva el despachador
 	++s.reparches;
 	StvParchear(sitio, pc, nb->checkedOffset);
+	// Unos pocos parches para engancharse al destino y despues se FIJA: deja de
+	// llamar para siempre. Adaptar mas no compensa — la llamada cuesta mas que
+	// cualquier mejora de prediccion que pueda comprar.
+	if (s.reparches >= stvjit::AdaptLinea())
+		StvFijar(sitio);
 	return pc;
 }
 
@@ -202,8 +208,16 @@ void Arm64JitBackend::StvOlvidarPcIC(uint32_t pc) {
 		s.pcPrevisto = 0xFFFFFFFFu;
 		// Un sitio congelado tiene un B incondicional donde iba el MOVZ:
 		// reescribirlo con el inmediato lo DESCONGELARIA sin querer.
-		if (s.estado != 1)
+		if (s.estado == 2)
 			continue;
+		if (s.estado == 3) {
+			// Estaba fijo: sin devolverle la llamada nunca volveria a predecir
+			// y quedaria degradado para siempre.
+			const u8 *llamada = GetBasePtr() + s.offMovz + 20;
+			StvEscribir(s.offCond, [llamada](ARM64XEmitter &e) { e.B(CC_NEQ, llamada); }, 1);
+			s.estado = 1;
+			s.reparches = 0;
+		}
 		StvEscribir(s.offMovz, [](ARM64XEmitter &e) {
 			e.MOVZ(W10, 0xFFFF, SHIFT_0);
 			e.MOVK(W10, 0xFFFF, SHIFT_16);

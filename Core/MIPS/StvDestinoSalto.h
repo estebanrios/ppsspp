@@ -119,7 +119,7 @@ extern "C" uint32_t StvAnotarIC(uint32_t pc, uint32_t sitio);
 // midio debug.stv.ic (4,7 M/s en la escena de referencia).
 int ModoLinea();
 int TopeLinea();      // debug.stv.iclinea.tope     — reparches antes de congelar
-int CadaLinea();      // debug.stv.iclinea.cada     — 1 de cada N fallos reparchea
+int AdaptLinea();     // debug.stv.iclinea.adapt    — parches antes de FIJAR el sitio
 
 // El backend ARM64 se registra aca: la invalidacion vive en codigo compartido
 // (IRJit.cpp) pero despredecir un sitio exige parchear codigo, que es cosa del

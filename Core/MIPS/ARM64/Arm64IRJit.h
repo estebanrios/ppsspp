@@ -96,7 +96,7 @@ private:
 		int offMovz;           // MOVZ (+4 el MOVK): el pc previsto
 		int offSalto;          // el B al destino
 		int offDirecto;        // adonde caer salteando la llamada al parcheador
-		uint8_t estado;        // 0 libre, 1 activo, 2 congelado
+		uint8_t estado;        // 0 libre, 1 adaptando, 2 congelado, 3 fijo
 		uint8_t reparches;
 		uint32_t fallos;       // para no reparchear en CADA fallo
 	};
@@ -106,6 +106,7 @@ private:
 	void StvEmitirSitioIC();               // al compilar una salida indirecta
 	void StvParchear(int sitio, uint32_t pc, int offsetDestino);
 	void StvCongelar(int sitio);
+	void StvFijar(int sitio);
 	void StvEscribir(int offset, const std::function<void(Arm64Gen::ARM64XEmitter &)> &emitir, int instrs);
 public:
 	uint32_t StvFalloIC(uint32_t pc, int sitio);   // la llama el codigo generado
