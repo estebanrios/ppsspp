@@ -63,7 +63,19 @@ Arm64JitBackend::Arm64JitBackend(JitOptions &jitopt, IRBlockCache &blocks)
 	stvjit::g_alReiniciar = []() { if (g_stvBackend) g_stvBackend->StvReiniciarIC(); };
 }
 
-Arm64JitBackend::~Arm64JitBackend() {}
+Arm64JitBackend::~Arm64JitBackend() {
+	// EL PUNTERO NO PUEDE SOBREVIVIR AL OBJETO. El backend se destruye ANTES
+	// que la cache de bloques, y el destructor de esa cache llama a Clear(),
+	// que llama a stvjit::OlvidarTodos(), que llama de vuelta aca. Sin esto se
+	// entra a un objeto ya destruido y revienta:
+	//   MIPSState::DoState -> ~Arm64IRJit -> ~IRJit -> ~IRBlockCache -> Clear
+	//     -> stvjit::OlvidarTodos -> la lambda -> backend muerto  (SIGSEGV)
+	if (g_stvBackend == this) {
+		g_stvBackend = nullptr;
+		stvjit::g_alOlvidarPc = nullptr;
+		stvjit::g_alReiniciar = nullptr;
+	}
+}
 
 void Arm64JitBackend::UpdateFCR31(MIPSState *mipsState) {
 	currentRoundingFunc_ = convertS0ToSCRATCH1_[mipsState->fcr31 & 3];
