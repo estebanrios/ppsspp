@@ -210,9 +210,15 @@ public:
 		// STV_GE_THREAD_v1: upstream NO usa el split aca (rompe pause2, ver el
 		// comentario de handleResult); permitirSplit=false lo preserva. El
 		// candado se suelta ANTES: el despacho puede esperar al worker.
-		if (candadoGe.owns_lock())
-			testigoDL.soltar();   // el fino se suelta DONDE se suelta el grueso:
-			candadoGe.unlock();   // el despacho final espera al worker
+		// LLAVES OBLIGATORIAS. Sin ellas el if cubria SOLO la primera linea y el
+		// unlock corria siempre: con la valvula encendida el grueso nunca se
+		// toma, asi que era un unlock sobre un candado no poseido ->
+		// std::system_error y el proceso muerto. Lo metio una edicion
+		// automatica mia y la sangria lo disimulaba.
+		testigoDL.soltar();       // el fino se suelta acá SIEMPRE
+		if (candadoGe.owns_lock()) {
+			candadoGe.unlock();   // el grueso, solo si se llego a tomar
+		}
 		StvGeDespacharCola(false);
 		return false;
 	}
@@ -277,9 +283,15 @@ public:
 		// we are already being extremely inaccurate by blasting the full display list here instead of running
 		// it in the background in parallel with the CPU.
 		// So, when debugging is active, we'll just use hleSplitSyscallOverGe.
-		if (candadoGe.owns_lock())
-			testigoDL.soltar();   // el fino se suelta DONDE se suelta el grueso:
-			candadoGe.unlock();   // el despacho final espera al worker
+		// LLAVES OBLIGATORIAS. Sin ellas el if cubria SOLO la primera linea y el
+		// unlock corria siempre: con la valvula encendida el grueso nunca se
+		// toma, asi que era un unlock sobre un candado no poseido ->
+		// std::system_error y el proceso muerto. Lo metio una edicion
+		// automatica mia y la sangria lo disimulaba.
+		testigoDL.soltar();       // el fino se suelta acá SIEMPRE
+		if (candadoGe.owns_lock()) {
+			candadoGe.unlock();   // el grueso, solo si se llego a tomar
+		}
 		StvGeDespacharCola(true);  // STV_GE_THREAD_v1
 	}
 };
