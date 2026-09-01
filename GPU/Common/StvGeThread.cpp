@@ -527,7 +527,16 @@ static uint32_t g_dlFinoRevision = 0;
 // codigo (los 24 sitios protegidos + el testigo) porque no cuesta nada y sirve
 // de base cuando se saque el Restore del camino de la interrupcion, que es el
 // arreglo de fondo. Pero la valvula NO puede quedar como gatillo en una imagen.
-bool DLFinoActivo() { return g_dlFino != 0; }   // reactivada: ver el commit de las dos fases
+// CLAVADA EN 0 otra vez (2026-08-31, segundo intento). El diseño de dos fases
+// arreglo tres ciclos reales (DrawSync/ListSync invertidos, InterruptEnd sin
+// necesitar el grueso, StvGeDespacharCola sosteniendo el fino sobre Barrera) y
+// AUN ASI cuelga. Queda al menos un cuarto camino sin identificar.
+//
+// Lo que SI quedo probado y sirve: los 24 sitios protegidos, el testigo (0
+// colisiones en 276.468 entradas con el candado grueso), y que el camino comun
+// de InterruptEnd es contabilidad pura (16.638 llamadas: pop=0, conGpu=0).
+// Retomar desde aca con un rastreador de orden de candados, no a ojo.
+bool DLFinoActivo() { return false; }
 
 static int ResolverDLFino() {
 	const char *e = getenv("STV_GE_DLFINO");
