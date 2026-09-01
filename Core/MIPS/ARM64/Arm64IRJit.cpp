@@ -134,10 +134,12 @@ void Arm64JitBackend::StvParchear(int sitio, uint32_t pc, int offsetDestino) {
 
 void Arm64JitBackend::StvCongelar(int sitio) {
 	StvSitioIC &s = stvSitios_[sitio];
-	// El B.NE pasa a ser un B incondicional al punto que ya saltea la llamada:
-	// el sitio deja de predecir Y deja de pagar la llamada en cada fallo.
+	// Se pisa la PRIMERA instruccion de la secuencia, no el B.NE: asi un sitio
+	// congelado cuesta UN salto directo en vez de las cinco instrucciones del
+	// MOVZ/MOVK/CMP/B.NE/B. Con 4,7 M de saltos por segundo, cuatro
+	// instrucciones de mas en los sitios congelados se pagan carisimo.
 	const u8 *directo = GetBasePtr() + s.offDirecto;
-	StvEscribir(s.offCond, [directo](ARM64XEmitter &e) { e.B(directo); }, 1);
+	StvEscribir(s.offMovz, [directo](ARM64XEmitter &e) { e.B(directo); }, 1);
 	s.estado = 2;
 	++stvjit::g_lineaCongelados;
 }
@@ -152,7 +154,7 @@ uint32_t Arm64JitBackend::StvFalloIC(uint32_t pc, int sitio) {
 	// parcheandolo cuesta el parche Y la llamada en cada salto, y no acierta
 	// nunca. Se congela. El tope es alto a proposito: un sitio que acierta el
 	// 90 % tambien falla de vez en cuando y no hay que castigarlo por eso.
-	if (s.reparches >= 64) {
+	if (s.reparches >= stvjit::TopeLinea()) {
 		StvCongelar(sitio);
 		return pc;
 	}
@@ -182,6 +184,10 @@ void Arm64JitBackend::StvOlvidarPcIC(uint32_t pc) {
 	for (int sitio : sitios) {
 		StvSitioIC &s = stvSitios_[sitio];
 		s.pcPrevisto = 0xFFFFFFFFu;
+		// Un sitio congelado tiene un B incondicional donde iba el MOVZ:
+		// reescribirlo con el inmediato lo DESCONGELARIA sin querer.
+		if (s.estado != 1)
+			continue;
 		StvEscribir(s.offMovz, [](ARM64XEmitter &e) {
 			e.MOVZ(W10, 0xFFFF, SHIFT_0);
 			e.MOVK(W10, 0xFFFF, SHIFT_16);

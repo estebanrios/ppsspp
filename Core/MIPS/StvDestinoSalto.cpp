@@ -33,6 +33,7 @@ FnOlvidarPc g_alOlvidarPc;
 FnReiniciar g_alReiniciar;
 static int s_icModo;
 static int s_lineaModo;
+static int s_lineaTope;
 
 static int s_icProximo;   // se reparte al compilar; se reinicia con la cache
 
@@ -62,6 +63,9 @@ static void LeerValvula() {
 		s_icModo = atoi(v);
 	if (__system_property_get("debug.stv.iclinea", v) > 0 && v[0])
 		s_lineaModo = atoi(v);
+	s_lineaTope = 4096;
+	if (__system_property_get("debug.stv.iclinea.tope", v) > 0 && v[0])
+		s_lineaTope = atoi(v);
 	if (__system_property_get("debug.stv.destino.mezcla", v) > 0 && v[0])
 		s_mezcla = atoi(v);
 	if (__system_property_get("debug.stv.destino.bits", v) > 0 && v[0]) {
@@ -81,6 +85,7 @@ int BitsCache() { LeerValvula(); return s_bits; }
 int MezclaCache() { LeerValvula(); return s_mezcla; }
 int ModoIC() { LeerValvula(); return s_icModo; }
 int ModoLinea() { LeerValvula(); return s_lineaModo; }
+int TopeLinea() { LeerValvula(); return s_lineaTope; }
 
 int SiguienteSitioIC() {
 	// Si se pasa, se reusa el ultimo: la medicion queda algo sucia en la cola
