@@ -29,6 +29,7 @@ uint64_t g_fallos;
 static bool s_leido;
 static int s_modo;
 static int s_bits;
+static int s_mezcla;
 
 static void LeerValvula() {
 	if (s_leido)
@@ -36,10 +37,13 @@ static void LeerValvula() {
 	s_leido = true;
 	s_modo = 1;
 	s_bits = 11;   // 2048 entradas = 16 KB
+	s_mezcla = 0;
 #ifdef __ANDROID__
 	char v[PROP_VALUE_MAX];
 	if (__system_property_get("debug.stv.destino", v) > 0 && v[0])
 		s_modo = atoi(v);
+	if (__system_property_get("debug.stv.destino.mezcla", v) > 0 && v[0])
+		s_mezcla = atoi(v);
 	if (__system_property_get("debug.stv.destino.bits", v) > 0 && v[0]) {
 		int b = atoi(v);
 		if (b >= 6 && b <= kBitsMax)
@@ -47,12 +51,14 @@ static void LeerValvula() {
 	}
 #endif
 	OlvidarTodos();
-	STV_LOG("STVDESTINO: modo=%d bits=%d (%d entradas, %d KB)",
-		s_modo, s_bits, 1 << s_bits, (int)((1 << s_bits) * sizeof(EntradaDestino) / 1024));
+	STV_LOG("STVDESTINO: modo=%d bits=%d mezcla=%d (%d entradas, %d KB)",
+		s_modo, s_bits, s_mezcla, 1 << s_bits,
+		(int)((1 << s_bits) * sizeof(EntradaDestino) / 1024));
 }
 
 int ModoCache() { LeerValvula(); return s_modo; }
 int BitsCache() { LeerValvula(); return s_bits; }
+int MezclaCache() { LeerValvula(); return s_mezcla; }
 
 void OlvidarTodos() {
 	memset(g_destinos, 0xFF, sizeof(g_destinos));
@@ -63,9 +69,11 @@ void OlvidarDestino(uint32_t pc) {
 	// el codigo, pero esta llamada puede llegar antes de eso. Barrer de mas es
 	// gratis; barrer de menos deja una entrada que apunta a codigo liberado.
 	for (int b = 6; b <= kBitsMax; ++b) {
-		EntradaDestino &e = g_destinos[IndiceDestino(pc, b)];
-		if (e.pc == pc)
-			e.pc = 0xFFFFFFFFu;
+		for (int m = 0; m < 2; ++m) {
+			EntradaDestino &e = g_destinos[IndiceDestino(pc, b, m)];
+			if (e.pc == pc)
+				e.pc = 0xFFFFFFFFu;
+		}
 	}
 }
 

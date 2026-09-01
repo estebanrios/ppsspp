@@ -55,12 +55,25 @@ extern uint64_t g_fallos;
 // Se lee UNA vez, al generar el codigo fijo del JIT.
 int ModoCache();
 int BitsCache();
+int MezclaCache();
 
-inline uint32_t IndiceDestino(uint32_t pc, int bits) {
-	return (pc >> 2) & ((1u << bits) - 1u);
+// Con mezcla=0 el indice son los bits bajos del pc, asi que dos direcciones
+// separadas por (4 << bits) bytes caen en la MISMA entrada. El codigo de un
+// juego de PSP ocupa megabytes: con 2048 entradas eso es una colision cada
+// 8 KB de codigo, y un lazo caliente repartido en unos cientos de KB se pisa a
+// si mismo decenas de veces. Con mezcla=1 se le hace un XOR con los bits de
+// arriba, que es una instruccion mas y reparte por todo el rango.
+inline uint32_t IndiceDestino(uint32_t pc, int bits, int mezcla) {
+	uint32_t i = pc >> 2;
+	if (mezcla)
+		i ^= pc >> (2 + bits);
+	return i & ((1u << bits) - 1u);
 }
 
 // Un bloque dejo de ser valido en `pc`: su entrada no puede sobrevivirlo.
+// Barre TODOS los anchos y las DOS formas de indice: el ancho y la mezcla vivos
+// se fijan al generar el codigo, pero esta llamada puede llegar antes. Barrer de
+// mas es gratis; barrer de menos deja una entrada apuntando a codigo liberado.
 void OlvidarDestino(uint32_t pc);
 void OlvidarTodos();
 void VolcarTestigo(const char *motivo);

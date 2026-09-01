@@ -220,9 +220,21 @@ void Arm64JitBackend::GenerateFixedCode(MIPSState *mipsState) {
 			// falla, sigue exactamente el camino de antes. Ver StvDestinoSalto.h.
 			const int stvModo = stvjit::ModoCache();
 			const int stvBits = stvjit::BitsCache();
+			const int stvMezcla = stvjit::MezclaCache();
 			if (stvModo > 0) {
 				MOV(W10, SCRATCH1);                                  // etiqueta = pc
-				UBFX(W11, SCRATCH1, 2, stvBits);                     // indice
+				if (stvMezcla) {
+					// Sin mezclar, el indice son los bits bajos del pc y dos
+					// direcciones separadas por (4 << bits) bytes chocan. El
+					// codigo del juego ocupa megabytes: eso es una colision cada
+					// pocos KB. El XOR con los bits de arriba cuesta una
+					// instruccion y reparte por todo el rango.
+					LSR(W11, SCRATCH1, 2);
+					EOR(W11, W11, SCRATCH1, ArithOption(SCRATCH1, ST_LSR, 2 + stvBits));
+					ANDI2R(W11, W11, (1u << stvBits) - 1u);
+				} else {
+					UBFX(W11, SCRATCH1, 2, stvBits);                 // indice
+				}
 				MOVP2R(X9, stvjit::g_destinos);
 				ADD(X9, X9, X11, ArithOption(X11, ST_LSL, 3));       // &entrada
 				LDR(INDEX_UNSIGNED, X12, X9, 0);                     // (palabra<<32)|pc
