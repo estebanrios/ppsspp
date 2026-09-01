@@ -1695,7 +1695,20 @@ void GPUCommon::InterruptEnd(int listid) {
 
 // TODO: Maybe cleaner to keep this in GE and trigger the clear directly?
 void GPUCommon::SyncEnd(GPUSyncType waitType, int listid, bool wokeThreads) {
-	stvge::CandadoGe candadoGe(stvmed::R_CAND_INTERRUPT);  // STV_GE_THREAD_v1: barre estados de dls[] desde el evento sync
+	// EL CANDADO GRUESO ACA ERA REDUNDANTE, y con el fino activo era ademas el
+	// unico que quedaba esperando. Medido con el medidor de esperas en la
+	// ranura 4: con el fino encendido, cand_interrupt paso de 6 a 3 tomas por
+	// cuadro (desaparecieron las dos de sceGe.cpp) pero siguio costando ~3,0 ms
+	// — o sea que las 3 restantes son estas, y cada una espera el doble.
+	//
+	// El cuerpo de esta funcion es CONTABILIDAD PURA de listas: recorre dls[] y
+	// pasa los COMPLETED a NONE. No toca una sola cosa del estado de GPU, y el
+	// candado fino de la linea de abajo ya cubre exactamente eso. El tratamiento
+	// de dos fases se habia aplicado a sceGe.cpp y a InterruptEnd, pero este
+	// sitio quedo sin tocar.
+	std::optional<stvge::CandadoGe> candadoGe;
+	if (!stvge::DLFinoActivo())
+		candadoGe.emplace(stvmed::R_CAND_INTERRUPT);
 	stvge::CandadoDL zonaDL("SyncEnd");   // contabilidad de listas
 	if (waitType == GPU_SYNC_DRAW && wokeThreads)
 	{
