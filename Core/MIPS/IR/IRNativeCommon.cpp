@@ -26,6 +26,7 @@
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPSTables.h"
 #include "Core/MIPS/IR/IRNativeCommon.h"
+#include "Core/MIPS/StvDestinoSalto.h"
 
 using namespace MIPSComp;
 
@@ -159,6 +160,11 @@ uint32_t IRNativeBackend::DoIRInst(uint64_t value) {
 	memcpy(&inst[0], &value, sizeof(value));
 	if constexpr (enableDebugStats)
 		debugSeenNotCompiledIR[(uint8_t)inst[0].op]++;
+	// Esto ya es el camino lento (vaciado de registros + llamada a C): un
+	// contador mas no se nota, y contesta que operaciones NO esta compilando el
+	// backend y con que frecuencia, que es lo unico que dice si vale la pena
+	// escribir el compilador de alguna.
+	++stvjit::g_irRepliegue[(uint8_t)inst[0].op];
 	// Doesn't really matter what value it returns as PC.
 	inst[1].op = IROp::ExitToPC;
 	return IRInterpret(currentMIPS, &inst[0]);

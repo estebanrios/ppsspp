@@ -117,6 +117,19 @@ extern "C" uint32_t StvAnotarIC(uint32_t pc, uint32_t sitio);
 // exactamente lo que este diseño existe para evitar. Se cuentan los FALLOS, que
 // ya pagan una llamada, y la tasa sale contra el total de saltos indirectos que
 // midio debug.stv.ic (4,7 M/s en la escena de referencia).
+// ---------------------------------------------------------------------------
+// REPLIEGUE DEL JIT AL INTERPRETE. Cuando el backend no sabe compilar una
+// operacion IR emite CompIR_Generic: vacia registros, guarda los estaticos,
+// llama a C y los restaura. Son decenas de instrucciones por operacion
+// EMULADA, asi que una sola operacion caliente sin compilar puede costar mas
+// que todo el despachador. El contador va en DoIRInst, que ya es un camino
+// lento: una suma mas ahi no se nota.
+extern uint64_t g_irRepliegue[256];
+int ModoRepliegue();   // debug.stv.irfall
+int ModoMapa();        // debug.stv.irmapa
+void AvisarMapa(int n);
+void VolcarRepliegue();
+
 int ModoLinea();
 int TopeLinea();      // debug.stv.iclinea.tope     — reparches antes de congelar
 int AdaptLinea();     // debug.stv.iclinea.adapt    — parches antes de FIJAR el sitio
@@ -129,6 +142,7 @@ typedef void (*FnOlvidarPc)(uint32_t pc);
 typedef void (*FnReiniciar)();
 extern FnOlvidarPc g_alOlvidarPc;
 extern FnReiniciar g_alReiniciar;
+extern FnReiniciar g_alVolcarMapa;
 extern uint64_t g_lineaFallos, g_lineaParches, g_lineaCongelados;
 
 // Un bloque dejo de ser valido en `pc`: su entrada no puede sobrevivirlo.

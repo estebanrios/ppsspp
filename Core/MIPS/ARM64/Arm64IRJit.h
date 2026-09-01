@@ -103,6 +103,13 @@ private:
 	std::vector<StvSitioIC> stvSitios_;
 	std::unordered_multimap<uint32_t, int> stvPorPc_;
 
+	// Mapa offset-nativo -> operacion IR, para poder preguntarle a un perfil a
+	// que operacion pertenece el codigo caliente. El backend ya sabe la
+	// direccion de cada operacion al compilar (el vector `addresses`); esto solo
+	// la guarda. Se llena con debug.stv.irmapa=1 y se vuelca a archivo.
+	std::vector<std::pair<int, uint8_t>> stvMapa_;
+	void StvVolcarMapa();
+
 	void StvEmitirSitioIC();               // al compilar una salida indirecta
 	void StvParchear(int sitio, uint32_t pc, int offsetDestino);
 	void StvCongelar(int sitio);

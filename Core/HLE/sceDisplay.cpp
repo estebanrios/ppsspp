@@ -599,6 +599,14 @@ void hleEnterVblank(u64 userdata, int cyclesLate) {
 			// sirve para decidir el tamaño de la tabla.
 			if (stvjit::ModoCache() >= 2 || stvjit::ModoIC() > 0 || stvjit::ModoLinea() > 0)
 				stvjit::VolcarTestigo("1s");
+			if (stvjit::ModoRepliegue() > 0)
+				stvjit::VolcarRepliegue();
+			// El mapa se vuelca cada 10 s: escribirlo cada segundo seria I/O
+			// para nada, y el mapa solo crece cuando se compila codigo nuevo.
+			if (stvjit::ModoMapa() > 0 && stvjit::g_alVolcarMapa) {
+				static int nMapa = 0;
+				if (++nMapa >= 10) { nMapa = 0; stvjit::g_alVolcarMapa(); }
+			}
 #endif
 		}
 	}

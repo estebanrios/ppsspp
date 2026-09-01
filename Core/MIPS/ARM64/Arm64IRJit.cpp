@@ -61,6 +61,7 @@ Arm64JitBackend::Arm64JitBackend(JitOptions &jitopt, IRBlockCache &blocks)
 	g_stvBackend = this;
 	stvjit::g_alOlvidarPc = [](uint32_t pc) { if (g_stvBackend) g_stvBackend->StvOlvidarPcIC(pc); };
 	stvjit::g_alReiniciar = []() { if (g_stvBackend) g_stvBackend->StvReiniciarIC(); };
+	stvjit::g_alVolcarMapa = []() { if (g_stvBackend) g_stvBackend->StvVolcarMapa(); };
 }
 
 Arm64JitBackend::~Arm64JitBackend() {
@@ -74,6 +75,7 @@ Arm64JitBackend::~Arm64JitBackend() {
 		g_stvBackend = nullptr;
 		stvjit::g_alOlvidarPc = nullptr;
 		stvjit::g_alReiniciar = nullptr;
+		stvjit::g_alVolcarMapa = nullptr;
 	}
 }
 
@@ -257,11 +259,30 @@ void Arm64JitBackend::StvEmitirSitioIC() {
 	s.offDirecto = (int)GetOffset(GetCodePointer());
 }
 
+void Arm64JitBackend::StvVolcarMapa() {
+	if (stvMapa_.empty())
+		return;
+	std::sort(stvMapa_.begin(), stvMapa_.end());
+	FILE *f = fopen("/data/local/tmp/stv_irmapa.txt", "w");
+	if (!f)
+		return;
+	// La base va en la primera linea: el perfil trae direcciones absolutas y
+	// sin ella no se pueden convertir a offsets (la aleatorizacion mueve todo).
+	fprintf(f, "base %p\n", (const void *)GetBasePtr());
+	for (const auto &e : stvMapa_) {
+		const IRMeta *meta = GetIRMeta((IROp)e.second);
+		fprintf(f, "%d %s\n", e.first, meta && meta->name ? meta->name : "?");
+	}
+	fclose(f);
+	stvjit::AvisarMapa((int)stvMapa_.size());
+}
+
 void Arm64JitBackend::StvReiniciarIC() {
 	// El bloque de codigo entero se va: los sitios no existen mas. No hay nada
 	// que despredecir, solo que olvidar.
 	stvSitios_.clear();
 	stvPorPc_.clear();
+	stvMapa_.clear();
 }
 
 static void NoBlockExits() {
@@ -305,6 +326,8 @@ bool Arm64JitBackend::CompileBlock(IRBlockCache *irBlockCache, int block_num) {
 		const IRInst &inst = instructions[i];
 		regs_.SetIRIndex(i);
 		addresses.push_back(GetCodePtr());
+		if (stvjit::ModoMapa() > 0)
+			stvMapa_.push_back({(int)GetOffset(GetCodePtr()), (uint8_t)inst.op});
 
 		CompileIRInst(inst);
 

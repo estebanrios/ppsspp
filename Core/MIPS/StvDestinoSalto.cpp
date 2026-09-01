@@ -4,6 +4,7 @@
 #include <cstdlib>
 
 #include "Common/Log.h"
+#include "Core/MIPS/IR/IRInst.h"
 
 // INFO_LOG(Log::JIT, ...) NO llega a logcat en este aparato: ese canal esta
 // filtrado. El testigo que no se puede leer no es un testigo. Se usa la misma
@@ -29,12 +30,16 @@ uint64_t g_fallos;
 alignas(64) SitioIC g_icSitios[kSitiosICMax];
 uint64_t g_icVia0, g_icVia1, g_icFallo;
 uint64_t g_lineaFallos, g_lineaParches, g_lineaCongelados;
+uint64_t g_irRepliegue[256];
 FnOlvidarPc g_alOlvidarPc;
 FnReiniciar g_alReiniciar;
+FnReiniciar g_alVolcarMapa;
 static int s_icModo;
 static int s_lineaModo;
 static int s_lineaTope;
 static int s_lineaAdapt;
+static int s_repliegueModo;
+static int s_mapaModo;
 
 static int s_icProximo;   // se reparte al compilar; se reinicia con la cache
 
@@ -62,6 +67,10 @@ static void LeerValvula() {
 		s_modo = atoi(v);
 	if (__system_property_get("debug.stv.ic", v) > 0 && v[0])
 		s_icModo = atoi(v);
+	if (__system_property_get("debug.stv.irfall", v) > 0 && v[0])
+		s_repliegueModo = atoi(v);
+	if (__system_property_get("debug.stv.irmapa", v) > 0 && v[0])
+		s_mapaModo = atoi(v);
 	if (__system_property_get("debug.stv.iclinea", v) > 0 && v[0])
 		s_lineaModo = atoi(v);
 	s_lineaTope = 4096;
@@ -91,6 +100,41 @@ int BitsCache() { LeerValvula(); return s_bits; }
 int MezclaCache() { LeerValvula(); return s_mezcla; }
 int ModoIC() { LeerValvula(); return s_icModo; }
 int ModoLinea() { LeerValvula(); return s_lineaModo; }
+int ModoRepliegue() { LeerValvula(); return s_repliegueModo; }
+int ModoMapa() { LeerValvula(); return s_mapaModo; }
+void AvisarMapa(int n) { STV_LOG("STVIRMAPA: %d entradas en /data/local/tmp/stv_irmapa.txt", n); }
+
+void VolcarRepliegue() {
+	// Se informa el TRAMO del ultimo segundo, no el acumulado: el arranque
+	// compila y replega muchisimo mas que el regimen, y el acumulado lo tapa.
+	static uint64_t ult[256];
+	struct { int op; uint64_t n; } top[256];
+	int m = 0;
+	uint64_t total = 0;
+	for (int i = 0; i < 256; ++i) {
+		uint64_t d = g_irRepliegue[i] - ult[i];
+		ult[i] = g_irRepliegue[i];
+		if (d) { top[m].op = i; top[m].n = d; ++m; total += d; }
+	}
+	if (!total) {
+		STV_LOG("STVREPLIEGUE: 0 operaciones sin compilar (el backend las cubre todas)");
+		return;
+	}
+	for (int i = 1; i < m; ++i) {           // insercion: m es chico
+		auto t = top[i];
+		int j = i - 1;
+		while (j >= 0 && top[j].n < t.n) { top[j + 1] = top[j]; --j; }
+		top[j + 1] = t;
+	}
+	char b[512];
+	int p = snprintf(b, sizeof(b), "STVREPLIEGUE: %llu/s en %d ops |", (unsigned long long)total, m);
+	for (int i = 0; i < m && i < 6 && p < (int)sizeof(b) - 40; ++i) {
+		const IRMeta *meta = GetIRMeta((IROp)top[i].op);
+		p += snprintf(b + p, sizeof(b) - p, " %s=%llu",
+			meta && meta->name ? meta->name : "?", (unsigned long long)top[i].n);
+	}
+	STV_LOG("%s", b);
+}
 int TopeLinea() { LeerValvula(); return s_lineaTope; }
 int AdaptLinea() { LeerValvula(); return s_lineaAdapt; }
 
