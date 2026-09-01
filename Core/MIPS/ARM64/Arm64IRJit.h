@@ -98,6 +98,7 @@ private:
 		int offDirecto;        // adonde caer salteando la llamada al parcheador
 		uint8_t estado;        // 0 libre, 1 activo, 2 congelado
 		uint8_t reparches;
+		uint32_t fallos;       // para no reparchear en CADA fallo
 	};
 	std::vector<StvSitioIC> stvSitios_;
 	std::unordered_multimap<uint32_t, int> stvPorPc_;

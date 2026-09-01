@@ -121,12 +121,20 @@ void Arm64JitBackend::StvParchear(int sitio, uint32_t pc, int offsetDestino) {
 	// El inmediato SIEMPRE ocupa dos instrucciones (MOVZ+MOVK), pase lo que
 	// pase con el valor: MOVI2R elige el largo segun el numero y aca el hueco
 	// esta reservado de antemano.
-	StvEscribir(s.offMovz, [pc](ARM64XEmitter &e) {
+	// LAS CINCO INSTRUCCIONES DE UNA. Antes eran dos escrituras separadas (el
+	// inmediato y el salto), o sea DOS vaciados de la cache de instrucciones, y
+	// cada vaciado es una barrera que vacia el pipeline. Con 1,14 M de parches
+	// por segundo medidos, eso eran 2,3 M de barreras por segundo — el motivo
+	// real de que la primera version perdiera, no la tasa de acierto.
+	const u8 *destino = GetBasePtr() + offsetDestino;
+	const u8 *fallo = GetBasePtr() + s.offMovz + 20;
+	StvEscribir(s.offMovz, [pc, destino, fallo](ARM64XEmitter &e) {
 		e.MOVZ(W10, pc & 0xFFFF, SHIFT_0);
 		e.MOVK(W10, pc >> 16, SHIFT_16);
-	}, 2);
-	const u8 *destino = GetBasePtr() + offsetDestino;
-	StvEscribir(s.offSalto, [destino](ARM64XEmitter &e) { e.B(destino); }, 1);
+		e.CMP(SCRATCH1, W10);
+		e.B(CC_NEQ, fallo);
+		e.B(destino);
+	}, 5);
 	s.pcPrevisto = pc;
 	stvPorPc_.emplace(pc, sitio);
 	++stvjit::g_lineaParches;
@@ -158,6 +166,14 @@ uint32_t Arm64JitBackend::StvFalloIC(uint32_t pc, int sitio) {
 		StvCongelar(sitio);
 		return pc;
 	}
+	// NO se reparchea en cada fallo. Medido: con reparche en cada fallo son
+	// 1,14 M de parches por segundo, y cada parche vacia la cache de
+	// instrucciones. Un sitio sin prediccion se parchea enseguida —es gratis
+	// acertar— y uno que ya predice solo cada N fallos, que alcanza de sobra
+	// para seguir un cambio de fase y no cuesta casi nada.
+	++s.fallos;
+	if (s.pcPrevisto != 0xFFFFFFFFu && (s.fallos % (uint32_t)stvjit::CadaLinea()) != 0)
+		return pc;
 	int block_num = blocks_.GetBlockNumberFromStartAddress(pc);
 	if (block_num < 0)
 		return pc;
