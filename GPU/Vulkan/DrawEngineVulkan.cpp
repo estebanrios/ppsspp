@@ -637,13 +637,24 @@ void DrawEngineVulkan::Flush() {
 			// del RT (framebuffers que arrancan dentro de otro) y 1 px de margen.
 			int stvRx1 = 0, stvRy1 = 0, stvRx2 = 0, stvRy2 = 0;
 			if (result.stvBboxValido) {
-				float ex = gstate_c.curRTWidth ? (float)gstate_c.curRTRenderWidth / gstate_c.curRTWidth : 1.0f;
-				float ey = gstate_c.curRTHeight ? (float)gstate_c.curRTRenderHeight / gstate_c.curRTHeight : 1.0f;
-				stvRx1 = (int)floorf((result.stvBbox[0] + gstate_c.curRTOffsetX) * ex) - 1;
-				stvRy1 = (int)floorf((result.stvBbox[1] + gstate_c.curRTOffsetY) * ey) - 1;
-				stvRx2 = (int)ceilf((result.stvBbox[2] + gstate_c.curRTOffsetX) * ex) + 1;
-				stvRy2 = (int)ceilf((result.stvBbox[3] + gstate_c.curRTOffsetY) * ey) + 1;
-				renderManager->StvAcotarProximoDraw(std::max(0, stvRx1), std::max(0, stvRy1), stvRx2, stvRy2);
+				// La escala sale del framebuffer virtual REAL al que se dibuja. La de
+				// gstate_c (curRTRenderWidth/curRTWidth) quedo rancia en algun draw (el
+				// relampago): caja de 480 px sin el 3x -> area cortada en 512 = costura.
+				const VirtualFramebuffer *stvVfb = framebufferManager_->GetCurrentRenderVFB();
+				float exG = gstate_c.curRTWidth ? (float)gstate_c.curRTRenderWidth / gstate_c.curRTWidth : 0.0f;
+				float ex = (stvVfb && stvVfb->renderScaleFactor > 0.0f) ? stvVfb->renderScaleFactor : exG;
+				float ey = ex;
+				{	static int avisos = 0;
+					if (avisos < 8 && stvVfb && fabsf(exG - ex) > 0.01f) { avisos++; STV_LOG("STVAREA escala rancia: gstate %.3f (rt %ux%u render %ux%u) vs vfb %.3f", exG, gstate_c.curRTWidth, gstate_c.curRTHeight, gstate_c.curRTRenderWidth, gstate_c.curRTRenderHeight, ex); }
+				}
+				const int offX = std::max(gstate_c.curRTOffsetX, 0), offY = std::max(gstate_c.curRTOffsetY, 0);   // como ConvertViewportAndScissor (renderX/renderY)
+				if (ex > 0.0f) {
+					stvRx1 = (int)floorf((result.stvBbox[0] + offX) * ex) - 1;
+					stvRy1 = (int)floorf((result.stvBbox[1] + offY) * ey) - 1;
+					stvRx2 = (int)ceilf((result.stvBbox[2] + offX) * ex) + 1;
+					stvRy2 = (int)ceilf((result.stvBbox[3] + offY) * ey) + 1;
+					renderManager->StvAcotarProximoDraw(std::max(0, stvRx1), std::max(0, stvRy1), stvRx2, stvRy2);
+				}
 			}
 			{
 				static int stvDc = -1;
