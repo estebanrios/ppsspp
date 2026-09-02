@@ -1028,6 +1028,24 @@ void VulkanQueueRunner::LogReadbackImage(const VKRStep &step) {
 	INFO_LOG(Log::G3D, "%s", StepToString(vulkan_, step).c_str());
 }
 
+// STV (gpudraw): timestamp DESPUES de cada draw, con su tamaño y el pipeline
+// (blend, depth, tag). Con debug.stv.gpuprof=1 y debug.stv.gpudraw=1 el volcado
+// por pase se convierte en volcado por draw: dice cuales de los 155 draws del
+// pase principal se llevan los 12 ms. Cuesta ~1 us por draw en la GPU.
+static void StvTimestampDraw(VkCommandBuffer cmd, QueueProfileContext &profile, VKRGraphicsPipeline *pipe, int count, bool indexed) {
+	static int modo = -1;
+	if (modo < 0) modo = StvPropInt("debug.stv.gpudraw");
+	if (modo < 1 || !profile.enabled || !profile.timestampsEnabled) return;
+	if (profile.timestampDescriptions.size() + 2 >= MAX_TIMESTAMP_QUERIES) return;
+	vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profile.queryPool, (uint32_t)profile.timestampDescriptions.size());
+	char b[160];
+	const char *tag = pipe ? pipe->Tag() : "?";
+	int bl = -1, dt = -1, dw = -1, st = -1;
+	if (pipe && pipe->desc) { bl = pipe->desc->blend0.blendEnable; dt = pipe->desc->dss.depthTestEnable; dw = pipe->desc->dss.depthWriteEnable; st = pipe->desc->dss.stencilTestEnable; }
+	snprintf(b, sizeof(b), "  draw %s%d bl%d z%d/%d st%d %s", indexed ? "i" : "", count, bl, dt, dw, st, tag);
+	profile.timestampDescriptions.push_back(b);
+}
+
 void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer cmd, int curFrame, QueueProfileContext &profile) {
 	for (size_t i = 0; i < step.preTransitions.size(); i++) {
 		const TransitionRequest &iter = step.preTransitions[i];
@@ -1258,6 +1276,7 @@ void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer c
 				VkDeviceSize voffset = c.drawIndexed.voffset;
 				vkCmdBindVertexBuffers(cmd, 0, 1, &c.drawIndexed.vbuffer, &voffset);
 				vkCmdDrawIndexed(cmd, c.drawIndexed.count, c.drawIndexed.instances, 0, 0, 0);
+				StvTimestampDraw(cmd, profile, lastGraphicsPipeline, c.drawIndexed.count, true);
 			}
 			break;
 
@@ -1270,6 +1289,7 @@ void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer c
 					vkCmdBindVertexBuffers(cmd, 0, 1, &c.draw.vbuffer, &c.draw.voffset);
 				}
 				vkCmdDraw(cmd, c.draw.count, 1, c.draw.offset, 0);
+				StvTimestampDraw(cmd, profile, lastGraphicsPipeline, c.draw.count, false);
 			}
 			break;
 

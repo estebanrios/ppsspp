@@ -16,7 +16,7 @@ enum {
 };
 #else
 enum {
-	MAX_TIMESTAMP_QUERIES = 128,
+	MAX_TIMESTAMP_QUERIES = 512,   // STV: perfil por draw (debug.stv.gpudraw)
 };
 #endif
 
