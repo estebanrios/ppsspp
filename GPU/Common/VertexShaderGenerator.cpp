@@ -283,9 +283,12 @@ bool GenerateVertexShader(const VShaderID &id, char *buffer, const ShaderLanguag
 			WRITE(p, "layout (location = 2) %sout lowp vec3 v_color1;\n", shading);
 		}
 
-		WRITE(p, "layout (location = 0) out highp vec3 v_texcoord;\n");
+		// STV fp16=2: varyings de textura y niebla en mediump (experimento; Mali interpola
+		// una varying highp al doble de costo). Se lee al generar el shader.
+		const char *stvPrec = StvPropInt("debug.stv.fp16") >= 2 ? "mediump" : "highp";
+		WRITE(p, "layout (location = 0) out %s vec3 v_texcoord;\n", stvPrec);
 
-		WRITE(p, "layout (location = 3) out highp float v_fogdepth;\n");
+		WRITE(p, "layout (location = 3) out %s float v_fogdepth;\n", stvPrec);
 
 		WRITE(p, "invariant gl_Position;\n");
 	} else if (compat.shaderLanguage == HLSL_D3D11) {

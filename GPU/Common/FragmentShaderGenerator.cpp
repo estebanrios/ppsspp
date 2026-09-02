@@ -19,6 +19,7 @@
 #include <sstream>
 
 #include "Common/Log.h"
+#include "Common/StvProp.h"
 #include "Common/StringUtils.h"
 #include "Common/GPU/OpenGL/GLFeatures.h"
 #include "Common/GPU/ShaderWriter.h"
@@ -253,9 +254,9 @@ bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLangu
 		if (lmode) {
 			WRITE(p, "layout (location = 2) %s in lowp vec3 v_color1;\n", shading);
 		}
-		WRITE(p, "layout (location = 3) in highp float v_fogdepth;\n");
+		WRITE(p, "layout (location = 3) in %s float v_fogdepth;\n", StvPropInt("debug.stv.fp16") >= 2 ? "mediump" : "highp");   // STV fp16=2: varyings en mediump (experimento)
 		if (doTexture) {
-			WRITE(p, "layout (location = 0) in highp vec3 v_texcoord;\n");
+			WRITE(p, "layout (location = 0) in %s vec3 v_texcoord;\n", StvPropInt("debug.stv.fp16") >= 2 ? "mediump" : "highp");
 		}
 
 		if (enableAlphaTest && !alphaTestAgainstZero) {
