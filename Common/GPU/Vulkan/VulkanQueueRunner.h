@@ -161,6 +161,7 @@ struct VKRStep {
 			int numDraws;
 			// Downloads and textures from this pass.
 			int numReads;
+			uint8_t stvDepthBits;  // STV: union de los pipelines del paso: 1 test, 2 write, 4 compare!=ALWAYS, 8 stencil
 			VkImageLayout finalColorLayout;
 			VkImageLayout finalDepthStencilLayout;
 			PipelineFlags pipelineFlags;  // contains the self dependency flag, in the form of USES_INPUT_ATTACHMENT

@@ -303,6 +303,15 @@ public:
 	// return value and skip the draw if we're in a bad state. In that case, call ReportBadState.
 	// The old assert wasn't very helpful in figuring out what caused it anyway...
 	bool BindPipeline(VKRGraphicsPipeline *pipeline, PipelineFlags flags, VKRPipelineLayout *pipelineLayout) {
+		if (pipeline && pipeline->desc && curRenderStep_) {   // STV: que depth usa de verdad cada paso
+			const auto &d = pipeline->desc->dss;
+			uint8_t b = 0;
+			if (d.depthTestEnable) b |= 1;
+			if (d.depthWriteEnable) b |= 2;
+			if (d.depthTestEnable && d.depthCompareOp != VK_COMPARE_OP_ALWAYS) b |= 4;
+			if (d.stencilTestEnable) b |= 8;
+			curRenderStep_->render.stvDepthBits |= b;
+		}
 		_dbg_assert_(curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER && pipeline != nullptr);
 		if (!curRenderStep_ || curRenderStep_->stepType != VKRStepType::RENDER) {
 			return false;

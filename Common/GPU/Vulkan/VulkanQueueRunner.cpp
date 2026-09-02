@@ -413,9 +413,9 @@ void VulkanQueueRunner::RunSteps(std::vector<VKRStep *> &steps, int curFrame, Fr
 				std::string d = StepToString(vulkan_, step);
 				if (step.stepType == VKRStepType::RENDER) {
 					char extra[128];
-					snprintf(extra, sizeof(extra), " [c%d/%d d%d/%d s%d/%d reads=%d area=%d,%d %dx%d]",
+					snprintf(extra, sizeof(extra), " [c%d/%d d%d/%d s%d/%d zbits=%d reads=%d area=%d,%d %dx%d]",
 						(int)step.render.colorLoad, (int)step.render.colorStore, (int)step.render.depthLoad, (int)step.render.depthStore,
-						(int)step.render.stencilLoad, (int)step.render.stencilStore, step.render.numReads,
+						(int)step.render.stencilLoad, (int)step.render.stencilStore, (int)step.render.stvDepthBits, step.render.numReads,
 						step.render.renderArea.offset.x, step.render.renderArea.offset.y, step.render.renderArea.extent.width, step.render.renderArea.extent.height);
 					d += extra;
 				}
@@ -805,6 +805,7 @@ void VulkanQueueRunner::ApplyRenderPassMerge(std::vector<VKRStep *> &steps) {
 		dst->render.numDraws += src->render.numDraws;
 		dst->render.numReads += src->render.numReads;
 		dst->render.pipelineFlags |= src->render.pipelineFlags;
+		dst->render.stvDepthBits |= src->render.stvDepthBits;
 		dst->render.renderPassType = MergeRPTypes(dst->render.renderPassType, src->render.renderPassType);
 	};
 	auto renderHasClear = [](const VKRStep *step) {
