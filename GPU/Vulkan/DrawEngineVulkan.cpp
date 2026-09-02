@@ -37,6 +37,7 @@
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/ShaderUniforms.h"
 #include "GPU/Vulkan/DrawEngineVulkan.h"
+#include "Common/StvProp.h"
 #include "GPU/Vulkan/TextureCacheVulkan.h"
 #include "GPU/Vulkan/ShaderManagerVulkan.h"
 #include "GPU/Vulkan/PipelineManagerVulkan.h"
@@ -486,6 +487,22 @@ void DrawEngineVulkan::Flush() {
 		// Only here, where we know whether to clear or to draw primitives, should we actually set the current framebuffer! Because that gives use the opportunity
 		// to use a "pre-clear" render pass, for high efficiency on tilers.
 		if (result.action == SW_DRAW_INDEXED) {
+			// STV (dcload): primer draw del pase, cubre todo y escribe cada pixel sin
+			// depender del contenido anterior -> el pase puede no cargar color (DONT_CARE).
+			{
+				static int stvDc = -1;
+				if (stvDc < 0) stvDc = StvPropInt("debug.stv.dcload");
+				if (stvDc >= 1 && result.stvCubreTodo && !gstate.isModeClear()) {
+					bool opaco = !gstate.isAlphaBlendEnabled()
+						&& (!gstate.isAlphaTestEnabled() || gstate.getAlphaTestFunction() == GE_COMP_ALWAYS)
+						&& !gstate.isColorTestEnabled()
+						&& gstate.getColorMask() == 0
+						&& (!gstate.isLogicOpEnabled() || gstate.getLogicOp() == GE_LOGIC_COPY)
+						&& (!gstate.isDepthTestEnabled() || gstate.getDepthTestFunction() == GE_COMP_ALWAYS)
+						&& (!gstate.isStencilTestEnabled() || gstate.getStencilTestFunction() == GE_COMP_ALWAYS);
+					if (opaco) renderManager->StvPrimerDrawOpaco();
+				}
+			}
 			if (textureNeedsApply) {
 				gstate_c.pixelMapped = result.pixelMapped;
 				gstate_c.dstSquared = false;

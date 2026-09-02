@@ -302,6 +302,12 @@ public:
 	// This is the first call in a draw operation. Instead of asserting like we used to, you can now check the
 	// return value and skip the draw if we're in a bad state. In that case, call ReportBadState.
 	// The old assert wasn't very helpful in figuring out what caused it anyway...
+	// STV (dcload): lo llama el motor de dibujo ANTES del primer draw de un paso
+	// cuando ese draw cubre todo el FB y escribe cada pixel sin leer el anterior.
+	void StvPrimerDrawOpaco() {
+		if (curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER && curRenderStep_->render.numDraws == 0)
+			curRenderStep_->render.stvOpacoFull = true;
+	}
 	bool BindPipeline(VKRGraphicsPipeline *pipeline, PipelineFlags flags, VKRPipelineLayout *pipelineLayout) {
 		if (pipeline && pipeline->desc && curRenderStep_) {   // STV: que depth usa de verdad cada paso
 			const auto &d = pipeline->desc->dss;

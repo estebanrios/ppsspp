@@ -48,6 +48,7 @@ struct SoftwareTransformResult {
 	TransformedVertex *drawBuffer;
 	int drawNumTrans;
 	bool pixelMapped;
+	bool stvCubreTodo;   // STV: el draw cubre todo el render target (through, rects en tira o malla)
 };
 
 struct SoftwareTransformParams {

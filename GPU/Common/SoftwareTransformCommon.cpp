@@ -373,6 +373,25 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 	// TODO: This bleeds outside the play area in non-buffered mode. Big deal? Probably not.
 	// TODO: Allow creating a depth clear and a color draw.
 	bool reallyAClear = false;
+	// STV (dcload): ¿este draw cubre TODO el render target? Sirve para no cargar
+	// (loadOp DONT_CARE) el contenido anterior cuando ademas el estado es opaco.
+	result->stvCubreTodo = false;
+	if (throughmode && numDecodedVerts >= 2 && (prim == GE_PRIM_RECTANGLES || prim == GE_PRIM_TRIANGLES)) {
+		const int sx2 = gstate.getScissorX2() + 1, sy2 = gstate.getScissorY2() + 1;
+		if (gstate.getScissorX1() == 0 && gstate.getScissorY1() == 0 && sx2 >= (int)gstate_c.curRTWidth && sy2 >= (int)gstate_c.curRTHeight) {
+			if (prim == GE_PRIM_RECTANGLES) {
+				result->stvCubreTodo = IsReallyAClear(transformed, numDecodedVerts, (float)sx2, (float)sy2);
+			} else if (numDecodedVerts >= 6) {
+				float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
+				for (int i = 0; i < numDecodedVerts; i++) {
+					minx = std::min(minx, transformed[i].x); maxx = std::max(maxx, transformed[i].x);
+					miny = std::min(miny, transformed[i].y); maxy = std::max(maxy, transformed[i].y);
+				}
+				// Heuristica (caja envolvente): una malla que cubre la caja entera. Vale para el experimento.
+				result->stvCubreTodo = minx <= 0.0f && miny <= 0.0f && maxx >= sx2 && maxy >= sy2;
+			}
+		}
+	}
 	// STV: testigo de por que un draw en modo clear NO se convierte en clear real
 	// (prop debug.stv.clrcnt=1; 1 linea/s con contadores + las primeras 20 muestras).
 	static int stvClr = -1;

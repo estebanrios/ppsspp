@@ -300,6 +300,25 @@ void VulkanQueueRunner::PreprocessSteps(std::vector<VKRStep *> &steps) {
 		}
 	}
 
+	// STV (dcload): pases cuyo primer draw es opaco y cubre todo: el color anterior
+	// no hace falta cargarlo. 1 = solo contar, 2 = aplicar (colorLoad DONT_CARE).
+	{
+		static int stvDc = -1;
+		if (stvDc < 0) { stvDc = StvPropInt("debug.stv.dcload"); STV_LOG("STVDCLOAD: modo=%d", stvDc); }
+		if (stvDc >= 1) {
+			static int nCand = 0, nAplic = 0, nPasos = 0, cad = 0;
+			for (int i = 0; i < (int)steps.size(); i++) {
+				if (steps[i]->stepType != VKRStepType::RENDER || !steps[i]->render.framebuffer) continue;
+				nPasos++;
+				if (steps[i]->render.stvOpacoFull && steps[i]->render.colorLoad == VKRRenderPassLoadAction::KEEP) {
+					nCand++;
+					if (stvDc >= 2) { steps[i]->render.colorLoad = VKRRenderPassLoadAction::DONT_CARE; nAplic++; }
+				}
+			}
+			if (++cad >= 300) { cad = 0; STV_LOG("STVDCLOAD: en 300 cuadros %d pases, %d candidatos, %d aplicados", nPasos, nCand, nAplic); nPasos = nCand = nAplic = 0; }
+		}
+	}
+
 	// Queue hacks.
 	if (hacksEnabled_) {
 		if (hacksEnabled_ & QUEUE_HACK_MGS2_ACID) {
@@ -418,6 +437,7 @@ void VulkanQueueRunner::RunSteps(std::vector<VKRStep *> &steps, int curFrame, Fr
 						(int)step.render.stencilLoad, (int)step.render.stencilStore, (int)step.render.stvDepthBits, step.render.numReads,
 						step.render.renderArea.offset.x, step.render.renderArea.offset.y, step.render.renderArea.extent.width, step.render.renderArea.extent.height);
 					d += extra;
+					if (step.render.stvOpacoFull) d += " OPACO";
 				}
 				profile->timestampDescriptions.push_back(d);
 			}
