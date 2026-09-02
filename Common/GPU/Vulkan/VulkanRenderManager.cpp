@@ -779,6 +779,16 @@ void VulkanRenderManager::BeginFrame(bool enableProfiling, bool enableLogProfile
 				str << line;
 				snprintf(line, sizeof(line), "Resource deletions: %d\n", vulkan_->GetLastDeleteCount());
 				str << line;
+				{	// STV: hueco de GPU entre el ultimo timestamp del cuadro anterior y el primero
+					// de este (los pases suman menos que el cuadro: ¿donde esta el resto?), y el
+					// periodo de pared entre BeginFrame consecutivos para compararlo.
+					static uint64_t stvUltimoTs = 0; static double stvUltimoWall = 0.0;
+					double gap = stvUltimoTs ? (double)((queryResults[0] - stvUltimoTs) & timestampDiffMask) * timestampConversionFactor : 0.0;
+					double periodo = stvUltimoWall > 0.0 ? (frameBeginTime - stvUltimoWall) * 1000.0 : 0.0;
+					stvUltimoTs = queryResults[numQueries - 1]; stvUltimoWall = frameBeginTime;
+					snprintf(line, sizeof(line), "STV gapPrev: %0.3f ms  periodoWall: %0.3f ms\n", gap, periodo);
+					str << line;
+				}
 				for (int i = 0; i < numQueries - 1; i++) {
 					uint64_t diff = (queryResults[i + 1] - queryResults[i]) & timestampDiffMask;
 					double milliseconds = (double)diff * timestampConversionFactor;
