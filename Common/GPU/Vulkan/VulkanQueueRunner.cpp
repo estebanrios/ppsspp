@@ -1032,6 +1032,25 @@ void VulkanQueueRunner::LogReadbackImage(const VKRStep &step) {
 // (blend, depth, tag). Con debug.stv.gpuprof=1 y debug.stv.gpudraw=1 el volcado
 // por pase se convierte en volcado por draw: dice cuales de los 155 draws del
 // pase principal se llevan los 12 ms. Cuesta ~1 us por draw en la GPU.
+// STV (skipdraw): BISECCION del pase principal. Mascara debug.stv.skipdraw:
+//   1 = saltear draws con blend, 2 = sin blend, 4 = con >= 1000 indices,
+//   8 = con < 100 indices, 16 = con depth write, 32 = sin depth write.
+// Solo actua en pases con >= 50 draws (el principal). Rompe la imagen a
+// proposito: es un instrumento para medir cuanto cuesta cada categoria.
+static bool StvSaltearDraw(const VKRStep &step, VKRGraphicsPipeline *pipe, int count) {
+	static int mask = -1;
+	if (mask < 0) mask = StvPropInt("debug.stv.skipdraw");
+	if (!mask || step.render.numDraws < 50 || !pipe || !pipe->desc) return false;
+	bool bl = pipe->desc->blend0.blendEnable, dw = pipe->desc->dss.depthWriteEnable;
+	if ((mask & 1) && bl) return true;
+	if ((mask & 2) && !bl) return true;
+	if ((mask & 4) && count >= 1000) return true;
+	if ((mask & 8) && count < 100) return true;
+	if ((mask & 16) && dw) return true;
+	if ((mask & 32) && !dw) return true;
+	return false;
+}
+
 static void StvTimestampDraw(VkCommandBuffer cmd, QueueProfileContext &profile, VKRGraphicsPipeline *pipe, int count, bool indexed) {
 	static int modo = -1;
 	if (modo < 0) modo = StvPropInt("debug.stv.gpudraw");
@@ -1275,7 +1294,8 @@ void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer c
 				vkCmdBindIndexBuffer(cmd, c.drawIndexed.ibuffer, c.drawIndexed.ioffset, VK_INDEX_TYPE_UINT16);
 				VkDeviceSize voffset = c.drawIndexed.voffset;
 				vkCmdBindVertexBuffers(cmd, 0, 1, &c.drawIndexed.vbuffer, &voffset);
-				vkCmdDrawIndexed(cmd, c.drawIndexed.count, c.drawIndexed.instances, 0, 0, 0);
+				if (!StvSaltearDraw(step, lastGraphicsPipeline, c.drawIndexed.count))
+					vkCmdDrawIndexed(cmd, c.drawIndexed.count, c.drawIndexed.instances, 0, 0, 0);
 				StvTimestampDraw(cmd, profile, lastGraphicsPipeline, c.drawIndexed.count, true);
 			}
 			break;
@@ -1288,7 +1308,8 @@ void VulkanQueueRunner::PerformRenderPass(const VKRStep &step, VkCommandBuffer c
 				if (c.draw.vbuffer) {
 					vkCmdBindVertexBuffers(cmd, 0, 1, &c.draw.vbuffer, &c.draw.voffset);
 				}
-				vkCmdDraw(cmd, c.draw.count, 1, c.draw.offset, 0);
+				if (!StvSaltearDraw(step, lastGraphicsPipeline, c.draw.count))
+					vkCmdDraw(cmd, c.draw.count, 1, c.draw.offset, 0);
 				StvTimestampDraw(cmd, profile, lastGraphicsPipeline, c.draw.count, false);
 			}
 			break;
