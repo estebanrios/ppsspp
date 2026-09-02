@@ -1176,6 +1176,11 @@ void VulkanRenderManager::BindFramebufferAsRenderTarget(VKRFramebuffer *fb, VKRR
 	curRenderStep_ = step;
 	curStepHasViewport_ = false;
 	curStepHasScissor_ = false;
+	// STV (area): un pase nuevo NO hereda el scissor del anterior (los pases de
+	// depal/blit del gestor de framebuffers dibujan sin fijar scissor y tomaban
+	// uno rancio de otro framebuffer: costura visible en f27). Ni la caja pendiente.
+	stvBboxPend_ = false;
+	curScissor_ = { { 0, 0 }, { 0, 0 } };
 	if (fb) {
 		curWidthRaw_ = fb->width;
 		curHeightRaw_ = fb->height;

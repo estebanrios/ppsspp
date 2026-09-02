@@ -314,7 +314,12 @@ public:
 	static int StvModoArea() { static int m = -1; if (m < 0) m = StvPropDef("debug.stv.area", 2); return m; }
 	void StvAplicarAreaDraw() {
 		if (StvModoArea() < 2) { stvBboxPend_ = false; return; }
+		// Sin scissor fijado en ESTE pase: el area es el framebuffer entero (como upstream).
 		VkRect2D r = curScissor_;
+		if (!curStepHasScissor_ || r.extent.width == 0 || r.extent.height == 0) {
+			r = { { 0, 0 }, { (uint32_t)std::max(curWidth_, 0), (uint32_t)std::max(curHeight_, 0) } };
+			stvBboxPend_ = false;
+		}
 		if (stvBboxPend_) {
 			int x1 = std::max(r.offset.x, stvBbox_.offset.x), y1 = std::max(r.offset.y, stvBbox_.offset.y);
 			int x2 = std::min(r.offset.x + (int)r.extent.width, stvBbox_.offset.x + (int)stvBbox_.extent.width);
