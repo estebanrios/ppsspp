@@ -443,6 +443,10 @@ void VulkanQueueRunner::RunSteps(std::vector<VKRStep *> &steps, int curFrame, Fr
 					d += extra;
 					if (step.render.stvOpacoFull) { char o[64]; snprintf(o, sizeof(o), " OPACO(%d,%d-%d,%d)", step.render.stvOpacoRect[0], step.render.stvOpacoRect[1], step.render.stvOpacoRect[2], step.render.stvOpacoRect[3]); d += o; }
 					if (step.render.stvPrimero[0]) { d += " 1o:"; d += step.render.stvPrimero; }
+					if (step.dependencies.size()) {   // STV: que framebuffers lee este pase (para saber que fusiones son legales)
+						d += " lee:";
+						for (size_t k = 0; k < step.dependencies.size(); k++) { VKRFramebuffer *df = step.dependencies[k]; d += df ? df->Tag() : "?"; d += ","; }
+					}
 				}
 				profile->timestampDescriptions.push_back(d);
 			}
