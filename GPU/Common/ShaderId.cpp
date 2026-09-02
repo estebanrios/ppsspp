@@ -407,6 +407,7 @@ void ComputeFragmentShaderID(FShaderID *id_out, const ComputedPipelineState &pip
 		    gstate.isAlphaBlendEnabled() &&
 		    gstate.getBlendFuncA() == GE_SRCBLEND_SRCALPHA &&
 		    gstate.getBlendFuncB() == GE_DSTBLEND_INVSRCALPHA &&
+		    (gstate.getBlendEq() == GE_BLENDMODE_MUL_AND_ADD || gstate.getBlendEq() == GE_BLENDMODE_MUL_AND_SUBTRACT || gstate.getBlendEq() == GE_BLENDMODE_MUL_AND_SUBTRACT_REVERSE) &&   // STV: con MIN/MAX/ABS un alpha 0 SI cambia el destino
 		    stencilToAlpha == REPLACE_ALPHA_NO &&
 		    !(gstate.isDepthTestEnabled() && gstate.isDepthWriteEnabled()) &&
 		    !gstate.isStencilTestEnabled()) {
