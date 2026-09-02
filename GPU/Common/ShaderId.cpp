@@ -282,6 +282,28 @@ inline u32 SanitizeBlendMode(GEBlendMode mode) {
 
 // Here we must take all the bits of the gstate that determine what the fragment shader will
 // look like, and concatenate them together into an ID.
+// STV_A0D_v1: toggle del descarte de contribucion nula (debug.stv.a0d / env
+// STV_A0D). Se lee al computar el ID: conmutar produce IDs nuevos y el cache
+// recompila solo — el A/B funciona en caliente sin reiniciar.
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
+static bool StvA0DiscardActivo() {
+	static int cache = -1;
+	static int vueltas = 0;
+	if (cache < 0 || ++vueltas >= 300) {
+		vueltas = 0;
+		const char *e = getenv("STV_A0D");
+		if (e && *e) { cache = (*e == '1') ? 1 : 0; return cache == 1; }
+#if defined(__ANDROID__)
+		char prop[92] = {0};
+		if (__system_property_get("debug.stv.a0d", prop) > 0) { cache = (prop[0] == '1') ? 1 : 0; return cache == 1; }
+#endif
+		cache = 0;
+	}
+	return cache == 1;
+}
+
 void ComputeFragmentShaderID(FShaderID *id_out, const ComputedPipelineState &pipelineState, const Draw::Bugs &bugs) {
 	FShaderID id;
 	if (gstate.isModeClear()) {
@@ -365,6 +387,31 @@ void ComputeFragmentShaderID(FShaderID *id_out, const ComputedPipelineState &pip
 
 		// 4 bits. Set to GE_LOGIC_COPY if not used, which does nothing in the shader generator.
 		id.SetBits(FS_BIT_REPLACE_LOGIC_OP, 4, (int)replaceLogicOpType);
+
+		// STV_A0D_v1: el bit del descarte de contribucion nula. Condicion
+		// CONSERVADORA — todas deben cumplirse para que descartar un fragment
+		// con alpha < 1/255 sea matematicamente identico al blend:
+		//   * blending por PIPELINE estandar srcalpha/invsrcalpha (el blend de
+		//     particulas): dst' = src*0 + dst*1 = dst, y el alpha destino
+		//     tambien queda intacto por la misma formula;
+		//   * el shader no reemplaza alpha por stencil (el A del vfb ES el
+		//     stencil del PSP: escribirlo cambiaria estado);
+		//   * sin escritura de depth (transparentes no escriben z; si
+		//     escribieran, descartar cambiaria el z-buffer) — el dirty ya
+		//     existe: GE_CMD_ZWRITEDISABLE dirtea FRAGMENTSHADER_STATE;
+		//   * sin stencil test (sus ops escriben aunque el color no cambie).
+		// Los draws opacos NO llevan el bit: su shader queda sin discard y el
+		// tiler conserva early-Z/FPK.
+		if (StvA0DiscardActivo() &&
+		    (replaceBlend == REPLACE_BLEND_NO || replaceBlend == REPLACE_BLEND_STANDARD) &&
+		    gstate.isAlphaBlendEnabled() &&
+		    gstate.getBlendFuncA() == GE_SRCBLEND_SRCALPHA &&
+		    gstate.getBlendFuncB() == GE_DSTBLEND_INVSRCALPHA &&
+		    stencilToAlpha == REPLACE_ALPHA_NO &&
+		    !(gstate.isDepthTestEnabled() && gstate.isDepthWriteEnabled()) &&
+		    !gstate.isStencilTestEnabled()) {
+			id.SetBit(FS_BIT_STV_DISCARD_A0);
+		}
 
 		// If replaceBlend == REPLACE_BLEND_STANDARD (or REPLACE_BLEND_NO) nothing is done, so we kill these bits.
 		if (replaceBlend == REPLACE_BLEND_BLUE_TO_ALPHA) {
