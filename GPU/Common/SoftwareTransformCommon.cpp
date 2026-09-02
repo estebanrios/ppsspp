@@ -464,7 +464,11 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 				stvMeshClear = true;
 				reallyAClear = true;
 				static int nMesh = 0; if (++nMesh % 600 == 1) STV_LOG("STVCLRMESH: %d mallas convertidas en clear (verts=%d color=%08x z=%.4f area=%.0f caja=%.0f)", nMesh, numDecodedVerts, c, z, area, caja);
+			} else {
+				static int nRech = 0; if (nRech++ < 5) STV_LOG("STVCLRMESH rechazo: area=%.1f caja=%.1f (min %.1f,%.1f max %.1f,%.1f sx2=%.0f sy2=%.0f) alphaOk=%d verts=%d", area, caja, minx, miny, maxx, maxy, sx2, sy2, (int)alphaOk, numDecodedVerts);
 			}
+		} else {
+			static int nRech2 = 0; if (nRech2++ < 5) STV_LOG("STVCLRMESH rechazo previo: uniforme=%d min %.1f,%.1f max %.1f,%.1f sx2=%.0f sy2=%.0f", (int)uniforme, minx, miny, maxx, maxy, sx2, sy2);
 		}
 	}
 	if (params_.allowClear && reallyAClear && gl_extensions.gpuVendor != GPU_VENDOR_IMGTEC) {
