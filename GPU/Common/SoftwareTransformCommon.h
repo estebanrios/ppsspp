@@ -50,6 +50,7 @@ struct SoftwareTransformResult {
 	bool pixelMapped;
 	bool stvCubre;       // STV: el draw cubre por completo SU caja envolvente (rect unico, tira de rects o reticula de triangulos)
 	float stvBbox[4];    // STV: caja envolvente en pixeles PSP (x1,y1,x2,y2)
+	bool stvBboxValido;  // STV: la caja se calculo (through, rects o triangulos)
 	bool stvClearAlpha;  // STV: clear por malla con alpha pisado -> limpiar tambien alpha/stencil con el mismo valor
 };
 

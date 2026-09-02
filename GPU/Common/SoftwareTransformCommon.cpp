@@ -379,6 +379,7 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 	// no es "cubre el framebuffer" sino "cubre el area que el pase termina
 	// tocando": eso se decide en el runner comparando esta caja con renderArea.
 	result->stvCubre = false;
+	result->stvBboxValido = false;
 	result->stvBbox[0] = result->stvBbox[1] = result->stvBbox[2] = result->stvBbox[3] = 0.0f;
 	if (throughmode && numDecodedVerts >= 2 && (prim == GE_PRIM_RECTANGLES || prim == GE_PRIM_TRIANGLES)) {
 		float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
@@ -387,6 +388,7 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 			miny = std::min(miny, transformed[i].y); maxy = std::max(maxy, transformed[i].y);
 		}
 		result->stvBbox[0] = minx; result->stvBbox[1] = miny; result->stvBbox[2] = maxx; result->stvBbox[3] = maxy;
+		result->stvBboxValido = true;
 		if (prim == GE_PRIM_RECTANGLES) {
 			if (numDecodedVerts == 2) {
 				result->stvCubre = true;   // un solo rectangulo: cubre su caja por definicion

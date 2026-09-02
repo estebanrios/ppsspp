@@ -594,6 +594,18 @@ void DrawEngineVulkan::Flush() {
 			// avisar al runner (con la caja en pixeles del render target). DESPUES de
 			// aplicar la textura: eso puede copiar y re-abrir el pase.
 			StvDescribirPrimerDraw(renderManager, (int)prim, numDecodedVerts_, false);
+			// STV (area): caja del draw en pixeles del render target, con el offset
+			// del RT (framebuffers que arrancan dentro de otro) y 1 px de margen.
+			int stvRx1 = 0, stvRy1 = 0, stvRx2 = 0, stvRy2 = 0;
+			if (result.stvBboxValido) {
+				float ex = gstate_c.curRTWidth ? (float)gstate_c.curRTRenderWidth / gstate_c.curRTWidth : 1.0f;
+				float ey = gstate_c.curRTHeight ? (float)gstate_c.curRTRenderHeight / gstate_c.curRTHeight : 1.0f;
+				stvRx1 = (int)floorf((result.stvBbox[0] + gstate_c.curRTOffsetX) * ex) - 1;
+				stvRy1 = (int)floorf((result.stvBbox[1] + gstate_c.curRTOffsetY) * ey) - 1;
+				stvRx2 = (int)ceilf((result.stvBbox[2] + gstate_c.curRTOffsetX) * ex) + 1;
+				stvRy2 = (int)ceilf((result.stvBbox[3] + gstate_c.curRTOffsetY) * ey) + 1;
+				renderManager->StvAcotarProximoDraw(std::max(0, stvRx1), std::max(0, stvRy1), stvRx2, stvRy2);
+			}
 			{
 				static int stvDc = -1;
 				if (stvDc < 0) stvDc = StvPropInt("debug.stv.dcload");
@@ -606,9 +618,7 @@ void DrawEngineVulkan::Flush() {
 						&& (!gstate.isDepthTestEnabled() || gstate.getDepthTestFunction() == GE_COMP_ALWAYS)
 						&& (!gstate.isStencilTestEnabled() || gstate.getStencilTestFunction() == GE_COMP_ALWAYS);
 					if (opaco) {
-						float ex = gstate_c.curRTWidth ? (float)gstate_c.curRTRenderWidth / gstate_c.curRTWidth : 1.0f;
-						float ey = gstate_c.curRTHeight ? (float)gstate_c.curRTRenderHeight / gstate_c.curRTHeight : 1.0f;
-						renderManager->StvPrimerDrawOpaco((int)floorf(result.stvBbox[0] * ex), (int)floorf(result.stvBbox[1] * ey), (int)ceilf(result.stvBbox[2] * ex), (int)ceilf(result.stvBbox[3] * ey));
+						renderManager->StvPrimerDrawOpaco(stvRx1 + 1, stvRy1 + 1, stvRx2 - 1, stvRy2 - 1);
 					}
 				}
 			}

@@ -22,6 +22,7 @@
 #include "Common/GPU/DataFormat.h"
 #include "Common/GPU/MiscTypes.h"
 #include "Common/GPU/Vulkan/VulkanQueueRunner.h"
+#include "Common/StvProp.h"
 #include "Common/GPU/Vulkan/VulkanFramebuffer.h"
 #include "Common/GPU/Vulkan/VulkanDescSet.h"
 #include "Common/GPU/thin3d.h"
@@ -304,6 +305,26 @@ public:
 	// The old assert wasn't very helpful in figuring out what caused it anyway...
 	// STV (dcload): lo llama el motor de dibujo ANTES del primer draw de un paso
 	// cuando ese draw cubre todo el FB y escribe cada pixel sin leer el anterior.
+	// STV (area): el motor de dibujo anuncia la caja (en pixeles del render target)
+	// que el PROXIMO draw puede tocar; vale para un solo draw y se consume ahi.
+	void StvAcotarProximoDraw(int x1, int y1, int x2, int y2) {
+		stvBboxPend_ = true; stvBbox_ = { { x1, y1 }, { (uint32_t)std::max(0, x2 - x1), (uint32_t)std::max(0, y2 - y1) } };
+	}
+	static int StvModoArea() { static int m = -1; if (m < 0) m = StvPropInt("debug.stv.area"); return m; }
+	void StvAplicarAreaDraw() {
+		if (StvModoArea() < 2) { stvBboxPend_ = false; return; }
+		VkRect2D r = curScissor_;
+		if (stvBboxPend_) {
+			int x1 = std::max(r.offset.x, stvBbox_.offset.x), y1 = std::max(r.offset.y, stvBbox_.offset.y);
+			int x2 = std::min(r.offset.x + (int)r.extent.width, stvBbox_.offset.x + (int)stvBbox_.extent.width);
+			int y2 = std::min(r.offset.y + (int)r.extent.height, stvBbox_.offset.y + (int)stvBbox_.extent.height);
+			if (x2 > x1 && y2 > y1) r = { { x1, y1 }, { (uint32_t)(x2 - x1), (uint32_t)(y2 - y1) } };
+			stvBboxPend_ = false;
+			stvAreaAcotados_++;
+		}
+		curRenderArea_.Apply(r);
+	}
+	uint32_t stvAreaAcotados_ = 0;
 	bool StvPasoSinDraws() const { return curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER && curRenderStep_->render.numDraws == 0; }
 	void StvPrimerDraw(const char *desc) {
 		if (StvPasoSinDraws() && !curRenderStep_->render.stvPrimero[0]) { strncpy(curRenderStep_->render.stvPrimero, desc, sizeof(curRenderStep_->render.stvPrimero) - 1); curRenderStep_->render.stvPrimero[sizeof(curRenderStep_->render.stvPrimero) - 1] = 0; }
@@ -398,7 +419,11 @@ public:
 		rc.extent.width = width;
 		rc.extent.height = height;
 
-		curRenderArea_.Apply(rc);
+		// STV (area): con debug.stv.area>=2 el area de render se acumula EN EL DRAW
+		// (scissor ∩ caja del draw cuando se conoce), no al fijar el scissor: un
+		// scissor de pantalla entera con un draw de 150x68 cargaba y volcaba 4,7 MB.
+		curScissor_ = rc;
+		if (StvModoArea() < 2) curRenderArea_.Apply(rc);
 
 		VkRenderData &data = curRenderStep_->commands.push_uninitialized();
 		data.cmd = VKRRenderCommand::SCISSOR;
@@ -485,6 +510,7 @@ public:
 
 	void Draw(int descSetIndex, int numUboOffsets, const uint32_t *uboOffsets, VkBuffer vbuffer, int voffset, int count, int offset = 0) {
 		_dbg_assert_(curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER && curStepHasViewport_ && curStepHasScissor_);
+		StvAplicarAreaDraw();
 		VkRenderData &data = curRenderStep_->commands.push_uninitialized();
 		data.cmd = VKRRenderCommand::DRAW;
 		data.draw.count = count;
@@ -501,6 +527,7 @@ public:
 
 	void DrawIndexed(int descSetIndex, int numUboOffsets, const uint32_t *uboOffsets, VkBuffer vbuffer, int voffset, VkBuffer ibuffer, int ioffset, int count, int numInstances) {
 		_dbg_assert_(curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER && curStepHasViewport_ && curStepHasScissor_);
+		StvAplicarAreaDraw();
 		VkRenderData &data = curRenderStep_->commands.push_uninitialized();
 		data.cmd = VKRRenderCommand::DRAW_INDEXED;
 		data.drawIndexed.count = count;
@@ -621,6 +648,9 @@ private:
 	bool curStepHasScissor_ = false;
 	PipelineFlags curPipelineFlags_{};
 	BoundingRect curRenderArea_;
+	VkRect2D curScissor_{};      // STV (area)
+	VkRect2D stvBbox_{};          // STV (area): caja del proximo draw
+	bool stvBboxPend_ = false;
 
 	std::vector<VKRStep *> steps_;
 
