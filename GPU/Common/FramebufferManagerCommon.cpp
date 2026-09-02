@@ -3865,7 +3865,7 @@ void FramebufferManagerCommon::BlitUsingRaster(
 	// mapea en pixeles del destino). Con el scissor a pantalla entera, el area de
 	// render del pase era el framebuffer entero y el tiler cargaba y volcaba todo.
 	static int stvArea = -1;
-	if (stvArea < 0) stvArea = StvPropInt("debug.stv.area");
+	if (stvArea < 0) stvArea = StvPropDef("debug.stv.area", 2);
 	if (stvArea >= 2) {
 		int sx1 = std::max(0, (int)floorf(std::min(destX1, destX2)) - 1), sy1 = std::max(0, (int)floorf(std::min(destY1, destY2)) - 1);
 		int sx2 = std::min(destW, (int)ceilf(std::max(destX1, destX2)) + 1), sy2 = std::min(destH, (int)ceilf(std::max(destY1, destY2)) + 1);

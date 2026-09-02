@@ -310,7 +310,8 @@ public:
 	void StvAcotarProximoDraw(int x1, int y1, int x2, int y2) {
 		stvBboxPend_ = true; stvBbox_ = { { x1, y1 }, { (uint32_t)std::max(0, x2 - x1), (uint32_t)std::max(0, y2 - y1) } };
 	}
-	static int StvModoArea() { static int m = -1; if (m < 0) m = StvPropInt("debug.stv.area"); return m; }
+	// debug.stv.area: vacio/2 = area acotada al draw y alineada a 32 (defecto desde f27), 0 = como upstream.
+	static int StvModoArea() { static int m = -1; if (m < 0) m = StvPropDef("debug.stv.area", 2); return m; }
 	void StvAplicarAreaDraw() {
 		if (StvModoArea() < 2) { stvBboxPend_ = false; return; }
 		VkRect2D r = curScissor_;
