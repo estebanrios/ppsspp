@@ -100,6 +100,7 @@ PFN_vkDestroyBufferView vkDestroyBufferView;
 PFN_vkCreateImage vkCreateImage;
 PFN_vkDestroyImage vkDestroyImage;
 PFN_vkGetImageSubresourceLayout vkGetImageSubresourceLayout;
+PFN_vkGetImageSubresourceLayout2EXT vkGetImageSubresourceLayout2EXT;
 PFN_vkCreateImageView vkCreateImageView;
 PFN_vkDestroyImageView vkDestroyImageView;
 PFN_vkCreateShaderModule vkCreateShaderModule;
@@ -805,6 +806,7 @@ void VulkanLoadDeviceFunctions(VkDevice device, const VulkanExtensions &enabledE
 	LOAD_DEVICE_FUNC(device, vkCreateImage);
 	LOAD_DEVICE_FUNC(device, vkDestroyImage);
 	LOAD_DEVICE_FUNC(device, vkGetImageSubresourceLayout);
+	vkGetImageSubresourceLayout2EXT = (PFN_vkGetImageSubresourceLayout2EXT)vkGetDeviceProcAddr(device, "vkGetImageSubresourceLayout2EXT");   // STV: puede ser null
 	LOAD_DEVICE_FUNC(device, vkCreateImageView);
 	LOAD_DEVICE_FUNC(device, vkDestroyImageView);
 	LOAD_DEVICE_FUNC(device, vkCreateShaderModule);

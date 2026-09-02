@@ -678,6 +678,7 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 	extensionsLookup_.EXT_shader_stencil_export = EnableDeviceExtension(VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME, 0);
 	extensionsLookup_.EXT_fragment_shader_interlock = EnableDeviceExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME, 0);
 	extensionsLookup_.ARM_rasterization_order_attachment_access = EnableDeviceExtension(VK_ARM_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_EXTENSION_NAME, 0);
+	extensionsLookup_.EXT_image_compression_control = EnableDeviceExtension(VK_EXT_IMAGE_COMPRESSION_CONTROL_EXTENSION_NAME, 0);   // STV: para preguntar si los render targets tienen AFBC
 
 #if !PPSSPP_PLATFORM(MAC) && !PPSSPP_PLATFORM(IOS)
 	extensionsLookup_.GOOGLE_display_timing = EnableDeviceExtension(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME, 0);

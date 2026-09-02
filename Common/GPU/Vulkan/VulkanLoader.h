@@ -110,6 +110,7 @@ extern PFN_vkDestroyBufferView vkDestroyBufferView;
 extern PFN_vkCreateImage vkCreateImage;
 extern PFN_vkDestroyImage vkDestroyImage;
 extern PFN_vkGetImageSubresourceLayout vkGetImageSubresourceLayout;
+extern PFN_vkGetImageSubresourceLayout2EXT vkGetImageSubresourceLayout2EXT;   // STV: consulta de compresion (AFBC)
 extern PFN_vkCreateImageView vkCreateImageView;
 extern PFN_vkDestroyImageView vkDestroyImageView;
 extern PFN_vkCreateShaderModule vkCreateShaderModule;
