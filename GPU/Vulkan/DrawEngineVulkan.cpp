@@ -38,6 +38,8 @@
 #include "GPU/Common/ShaderUniforms.h"
 #include "GPU/Vulkan/DrawEngineVulkan.h"
 #include "Common/StvProp.h"
+#include <cstring>
+#include "Common/TimeUtil.h"
 #include <cmath>
 #include "GPU/Vulkan/TextureCacheVulkan.h"
 #include "GPU/Vulkan/ShaderManagerVulkan.h"
@@ -242,6 +244,38 @@ static void StvDescribirPrimerDraw(VulkanRenderManager *rm, int prim, int verts,
 	rm->StvPrimerDraw(b);
 }
 
+// STV (fsbits): histograma por segundo de los bits del fragment shader de los
+// draws (y del subconjunto CON blend), para saber que llevan los shaders de las
+// capas transparentes que dominan el pase principal. Con debug.stv.gpuprof=1.
+// Y la biseccion por bits: debug.stv.skipdraw 64 = saltear draws con alpha
+// test, 128 = con niebla, 256 = con depal en shader, 512 = con textura.
+static bool StvFsBits(const FShaderID &id, bool blend) {
+	static int modo = -1, mask = -1;
+	if (modo < 0) { modo = StvPropInt("debug.stv.gpuprof"); mask = StvPropInt("debug.stv.skipdraw"); }
+	bool at = id.Bit(FS_BIT_ALPHA_TEST), az = id.Bit(FS_BIT_ALPHA_AGAINST_ZERO), fog = id.Bit(FS_BIT_ENABLE_FOG);
+	bool tex = id.Bit(FS_BIT_DO_TEXTURE), depal = id.Bits(FS_BIT_SHADER_DEPAL_MODE, 2) != 0, ct = id.Bit(FS_BIT_COLOR_TEST);
+	bool rb = id.Bits(FS_BIT_REPLACE_BLEND, 3) != 0, ta = id.Bit(FS_BIT_TEXALPHA);
+	if (modo >= 1) {
+		static int n[2][9] = {}; static double t0 = 0;
+		int b = blend ? 1 : 0;
+		n[b][0]++; n[b][1] += at; n[b][2] += az; n[b][3] += fog; n[b][4] += tex; n[b][5] += depal; n[b][6] += ct; n[b][7] += rb; n[b][8] += ta;
+		double t = time_now_d();
+		if (t - t0 > 1.0) {
+			t0 = t;
+			for (int k = 0; k < 2; k++)
+				STV_LOG("STVFSBITS %s: draws=%d alphatest=%d contra0=%d niebla=%d textura=%d depal=%d colortest=%d replaceblend=%d texalpha=%d", k ? "CON blend" : "sin blend", n[k][0], n[k][1], n[k][2], n[k][3], n[k][4], n[k][5], n[k][6], n[k][7], n[k][8]);
+			memset(n, 0, sizeof(n));
+		}
+	}
+	if (mask > 0) {
+		if ((mask & 64) && at) return true;
+		if ((mask & 128) && fog) return true;
+		if ((mask & 256) && depal) return true;
+		if ((mask & 512) && tex) return true;
+	}
+	return false;
+}
+
 void DrawEngineVulkan::Flush() {
 	if (!numDrawVerts_) {
 		return;
@@ -402,9 +436,11 @@ void DrawEngineVulkan::Flush() {
 			VkBuffer ibuf;
 			u32 ibOffset = (uint32_t)pushIndex_->Push(decIndex_, sizeof(uint16_t) * vertexCount, 4, &ibuf);
 			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
+			if (!StvFsBits(fshader->GetID(), pipelineState_.blendState.blendEnabled))
 			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, vertexCount, 1);
 		} else {
 			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
+			if (!StvFsBits(fshader->GetID(), pipelineState_.blendState.blendEnabled))
 			renderManager->Draw(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, vertexCount);
 		}
 		if (useDepthRaster_) {
@@ -622,6 +658,7 @@ void DrawEngineVulkan::Flush() {
 					}
 				}
 			}
+			if (!StvFsBits(fshader->GetID(), pipelineState_.blendState.blendEnabled))
 			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, result.drawNumTrans, 1);
 		} else if (result.action == SW_CLEAR) {
 			// Note: we won't get here if the clear is alpha but not color, or color but not alpha.
