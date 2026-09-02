@@ -38,6 +38,8 @@
 #include "GPU/Common/PresentationCommon.h"
 #include "GPU/Common/TextureCacheCommon.h"
 #include "GPU/Common/ReinterpretFramebuffer.h"
+#include "Common/StvProp.h"
+#include <cmath>
 #include "GPU/GPUCommon.h"
 #include "GPU/GPUState.h"
 
@@ -3859,7 +3861,24 @@ void FramebufferManagerCommon::BlitUsingRaster(
 
 	Draw::Viewport viewport{ 0.0f, 0.0f, (float)dest->Width(), (float)dest->Height(), 0.0f, 1.0f };
 	draw_->SetViewport(viewport);
-	draw_->SetScissorRect(0, 0, (int)dest->Width(), (int)dest->Height());
+	// STV (area): el blit solo toca su rectangulo de destino (Draw2D::Blit lo
+	// mapea en pixeles del destino). Con el scissor a pantalla entera, el area de
+	// render del pase era el framebuffer entero y el tiler cargaba y volcaba todo.
+	static int stvArea = -1;
+	if (stvArea < 0) stvArea = StvPropInt("debug.stv.area");
+	if (stvArea >= 2) {
+		int sx1 = std::max(0, (int)floorf(std::min(destX1, destX2)) - 1), sy1 = std::max(0, (int)floorf(std::min(destY1, destY2)) - 1);
+		int sx2 = std::min(destW, (int)ceilf(std::max(destX1, destX2)) + 1), sy2 = std::min(destH, (int)ceilf(std::max(destY1, destY2)) + 1);
+		if (sx2 > sx1 && sy2 > sy1) draw_->SetScissorRect(sx1, sy1, sx2 - sx1, sy2 - sy1);
+		else draw_->SetScissorRect(0, 0, (int)dest->Width(), (int)dest->Height());
+	} else {
+		draw_->SetScissorRect(0, 0, (int)dest->Width(), (int)dest->Height());
+	}
+	{	// STV: testigo de blits raster (que son, de donde a donde), 1 de cada 120
+		static int n = 0;
+		if (stvArea >= 1 && (++n % 120) == 1)
+			STV_LOG("STVBLIT %s: src %.0f,%.0f-%.0f,%.0f (%dx%d) -> dst %.0f,%.0f-%.0f,%.0f (%dx%d) canal=%d", tag ? tag : "BlitUsingRaster", srcX1, srcY1, srcX2, srcY2, srcW, srcH, destX1, destY1, destX2, destY2, destW, destH, (int)pipeline->info.writeChannel);
+	}
 
 	draw2D_.Blit(pipeline, srcX1, srcY1, srcX2, srcY2, destX1, destY1, destX2, destY2, (float)srcW, (float)srcH, (float)destW, (float)destH, linearFilter, scaleFactor);
 
