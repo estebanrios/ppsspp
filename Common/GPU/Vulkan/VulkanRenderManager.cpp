@@ -10,6 +10,10 @@
 #include "Common/GPU/Vulkan/VulkanAlloc.h"
 #include "Common/GPU/Vulkan/VulkanContext.h"
 #include "Common/GPU/Vulkan/VulkanRenderManager.h"
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#include <android/log.h>
+#endif
 #include "Common/StvMedidor.h"  // STV_MEDIDOR_ESPERAS_v1
 
 #include "Common/LogReporting.h"
@@ -791,6 +795,25 @@ void VulkanRenderManager::BeginFrame(bool enableProfiling, bool enableLogProfile
 					str << line;
 				}
 				frameData.profile.profileSummary = str.str();
+#ifdef __ANDROID__
+				{	// STV: volcado del perfil por pase a logcat, 1 de cada 60 cuadros, por prop.
+					static int stvCadencia = 0;
+					char v[PROP_VALUE_MAX] = {0};
+					if (__system_property_get("debug.stv.gpuprof", v) > 0 && v[0] == '1' && ++stvCadencia >= 60) {
+						stvCadencia = 0;
+						__android_log_print(ANDROID_LOG_INFO, "STV", "STVGPUPROF INICIO cuadro=%llu", (unsigned long long)frameId);
+						std::string resumen = frameData.profile.profileSummary;
+						size_t ini = 0;
+						while (ini < resumen.size()) {
+							size_t fin = resumen.find('\n', ini);
+							if (fin == std::string::npos) fin = resumen.size();
+							__android_log_print(ANDROID_LOG_INFO, "STV", "STVGPUPROF %s", resumen.substr(ini, fin - ini).c_str());
+							ini = fin + 1;
+						}
+						__android_log_print(ANDROID_LOG_INFO, "STV", "STVGPUPROF FIN");
+					}
+				}
+#endif
 			} else {
 				frameData.profile.profileSummary = "(error getting GPU profile - not ready?)";
 			}

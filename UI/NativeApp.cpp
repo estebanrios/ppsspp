@@ -24,6 +24,9 @@
 // Windows has its own code that bypasses the framework entirely.
 
 #include "ppsspp_config.h"
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#endif
 
 // Background worker threads should be spawned in NativeInit and joined
 // in NativeShutdown.
@@ -1053,6 +1056,14 @@ void NativeFrame(GraphicsContext *graphicsContext) {
 	Draw::DebugFlags debugFlags = Draw::DebugFlags::NONE;
 	if ((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::GPU_PROFILE)
 		debugFlags |= Draw::DebugFlags::PROFILE_TIMESTAMPS;
+#ifdef __ANDROID__
+	{	// STV: perfil de GPU por pase (timestamps Vulkan) volcado a logcat por prop,
+		// sin pasar por el menu de desarrollo. La prop se relee cada cuadro (~1 us).
+		char v[PROP_VALUE_MAX] = {0};
+		if (__system_property_get("debug.stv.gpuprof", v) > 0 && v[0] == '1')
+			debugFlags |= Draw::DebugFlags::PROFILE_TIMESTAMPS;
+	}
+#endif
 	if (g_Config.bGpuLogProfiler)
 		debugFlags |= Draw::DebugFlags::PROFILE_SCOPES;
 	g_draw->BeginFrame(debugFlags);
