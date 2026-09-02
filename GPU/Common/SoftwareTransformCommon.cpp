@@ -28,6 +28,8 @@
 #include "GPU/Common/FramebufferManagerCommon.h"
 #include "GPU/Common/GPUStateUtils.h"
 #include "GPU/Common/SoftwareTransformCommon.h"
+#include "Common/StvProp.h"
+#include "Common/TimeUtil.h"
 #include "GPU/Common/TransformCommon.h"
 #include "GPU/Common/VertexDecoderCommon.h"
 #include "GPU/Common/DrawEngineCommon.h"
@@ -371,6 +373,33 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 	// TODO: This bleeds outside the play area in non-buffered mode. Big deal? Probably not.
 	// TODO: Allow creating a depth clear and a color draw.
 	bool reallyAClear = false;
+	// STV: testigo de por que un draw en modo clear NO se convierte en clear real
+	// (prop debug.stv.clrcnt=1; 1 linea/s con contadores + las primeras 20 muestras).
+	static int stvClr = -1;
+	if (stvClr < 0) stvClr = StvPropInt("debug.stv.clrcnt");
+	if (stvClr == 1 && gstate.isModeClear()) {
+		static int nClear = 0, nRect = 0, nThrough = 0, nReal = 0, nMuestras = 0;
+		static double t0 = 0;
+		nClear++;
+		if (prim == GE_PRIM_RECTANGLES) nRect++;
+		if (throughmode) nThrough++;
+		bool real = false;
+		if (numDecodedVerts > 1 && prim == GE_PRIM_RECTANGLES && throughmode)
+			real = IsReallyAClear(transformed, numDecodedVerts, gstate.getScissorX2() + 1, gstate.getScissorY2() + 1);
+		if (real) nReal++;
+		if (nMuestras < 20) {
+			nMuestras++;
+			STV_LOG("STVCLR muestra: prim=%d verts=%d through=%d real=%d v0=(%.1f,%.1f) v1=(%.1f,%.1f) vN=(%.1f,%.1f) scissor=%d,%d-%d,%d masks c%d a%d d%d colormask=%08x stencilwm=%02x allowClear=%d sepAlpha=%d fb=%dx%d",
+				prim, numDecodedVerts, (int)throughmode, (int)real, transformed[0].x, transformed[0].y, transformed[1].x, transformed[1].y,
+				transformed[numDecodedVerts - 1].x, transformed[numDecodedVerts - 1].y,
+				gstate.getScissorX1(), gstate.getScissorY1(), gstate.getScissorX2(), gstate.getScissorY2(),
+				(int)gstate.isClearModeColorMask(), (int)gstate.isClearModeAlphaMask(), (int)gstate.isClearModeDepthMask(),
+				gstate.getColorMask(), gstate.getStencilWriteMask(), (int)params_.allowClear, (int)params_.allowSeparateAlphaClear,
+				gstate.getRegionX2() + 1, gstate.getRegionY2() + 1);
+		}
+		double t = time_now_d();
+		if (t - t0 > 1.0) { t0 = t; STV_LOG("STVCLR 1s: clearmode=%d rect=%d through=%d reales=%d", nClear, nRect, nThrough, nReal); nClear = nRect = nThrough = nReal = 0; }
+	}
 	if (numDecodedVerts > 1 && prim == GE_PRIM_RECTANGLES && gstate.isModeClear() && throughmode) {
 		int scissorX2 = gstate.getScissorX2() + 1;
 		int scissorY2 = gstate.getScissorY2() + 1;
