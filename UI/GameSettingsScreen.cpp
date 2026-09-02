@@ -343,9 +343,9 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
 	// llevan su ANCLA entera (125/150/175 con x2, 225/250/275 con x3 — el
 	// runtime solo escala sobre su ancla). Ambas claves son PER_GAME: "Crear
 	// config. del juego" deja la resolucion por titulo.
-	static const char *internalResolutions[] = { "Auto (1:1)", "1x PSP", "1.25x PSP (STV)", "1.5x PSP (STV)", "1.75x PSP (STV)", "2x PSP", "2.25x PSP (STV)", "2.5x PSP (STV)", "2.75x PSP (STV)", "3x PSP", "4x PSP", "5x PSP", "6x PSP", "7x PSP", "8x PSP", "9x PSP", "10x PSP" };
-	static const int stvResMapInternal[] = { 0, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 5, 6, 7, 8, 9, 10 };
-	static const int stvResMapEscala[]   = { 0, 0, 125, 150, 175, 0, 225, 250, 275, 0, 0, 0, 0, 0, 0, 0, 0 };
+	static const char *internalResolutions[] = { "Auto (1:1)", "1x PSP", "1.25x PSP (STV)", "1.5x PSP (STV)", "1.75x PSP (STV)", "2x PSP", "2.25x PSP (STV)", "2.5x PSP (STV)", "Panel 1:1 (STV)", "2.75x PSP (STV)", "3x PSP", "4x PSP", "5x PSP", "6x PSP", "7x PSP", "8x PSP", "9x PSP", "10x PSP" };
+	static const int stvResMapInternal[] = { 0, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 5, 6, 7, 8, 9, 10 };
+	static const int stvResMapEscala[]   = { 0, 0, 125, 150, 175, 0, 225, 250, 265, 275, 0, 0, 0, 0, 0, 0, 0, 0 };
 	static int stvResIndice = 0;
 	{
 		stvResIndice = 0;

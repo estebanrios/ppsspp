@@ -90,6 +90,8 @@ float StvEscalaDeTexto(const char *s) {
 		return 2.5f;
 	if (!strcmp(s, "275"))
 		return 2.75f;
+	if (!strcmp(s, "265"))   // STV: 1:1 REAL con el panel de 720p = 720/272 (1280x720 exactos, sin reescalado final)
+		return 720.0f / 272.0f;
 	return 0.0f;
 }
 
@@ -114,6 +116,7 @@ float StvResolverEscala() {
 	case 175: return 1.75f;
 	case 225: return 2.25f;
 	case 250: return 2.5f;
+	case 265: return 720.0f / 272.0f;
 	case 275: return 2.75f;
 	default: return 0.0f;
 	}
