@@ -439,7 +439,7 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 	// la bandera de compat ClearMeshIgnoresAlpha (o debug.stv.clrmesh=2).
 	// debug.stv.clrmesh: vacio/1 = activo, 0 = apagado, 2 = ignorar alpha siempre.
 	static int stvClrMesh = -1;
-	if (stvClrMesh < 0) { stvClrMesh = StvPropInt("debug.stv.clrmesh"); if (stvClrMesh == 0) { char v[8] = {0}; if (__system_property_get("debug.stv.clrmesh", v) <= 0) stvClrMesh = 1; } }
+	if (stvClrMesh < 0) stvClrMesh = StvPropDef("debug.stv.clrmesh", 1);
 	bool stvMeshClear = false;
 	if (stvClrMesh >= 1 && !reallyAClear && numDecodedVerts >= 6 && prim == GE_PRIM_TRIANGLES && gstate.isModeClear() && throughmode) {
 		const float sx2 = gstate.getScissorX2() + 1, sy2 = gstate.getScissorY2() + 1;
