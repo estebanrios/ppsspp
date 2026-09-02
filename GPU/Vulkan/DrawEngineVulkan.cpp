@@ -249,6 +249,7 @@ static void StvDescribirPrimerDraw(VulkanRenderManager *rm, int prim, int verts,
 // capas transparentes que dominan el pase principal. Con debug.stv.gpuprof=1.
 // Y la biseccion por bits: debug.stv.skipdraw 64 = saltear draws con alpha
 // test, 128 = con niebla, 256 = con depal en shader, 512 = con textura.
+static FShaderID stvUltimoFs;   // STV: ID del ultimo fragment shader calculado (los draws sin cambio de estado lo reutilizan)
 static bool StvFsBits(const FShaderID &id, bool blend) {
 	static int modo = -1, mask = -1;
 	if (modo < 0) { modo = StvPropInt("debug.stv.gpuprof"); mask = StvPropInt("debug.stv.skipdraw"); }
@@ -363,6 +364,7 @@ void DrawEngineVulkan::Flush() {
 			VulkanGeometryShader *gshader = nullptr;
 
 			shaderManager_->GetShaders(prim, dec_->VertexType(), &vshader, &fshader, &gshader, pipelineState_, true, useHWTessellation_, decOptions_.expandAllWeightsToFloat, applySkinInDecode_);
+			if (fshader) stvUltimoFs = fshader->GetID();
 			_dbg_assert_msg_(vshader->UseHWTransform(), "Bad vshader");
 			VulkanPipeline *pipeline = pipelineManager_->GetOrCreatePipeline(renderManager, pipelineLayout_, pipelineKey_, &dec_->decFmt, vshader, fshader, gshader, true, 0, framebufferManager_->GetMSAALevel(), false);
 			if (!pipeline || !pipeline->pipeline) {
@@ -436,11 +438,11 @@ void DrawEngineVulkan::Flush() {
 			VkBuffer ibuf;
 			u32 ibOffset = (uint32_t)pushIndex_->Push(decIndex_, sizeof(uint16_t) * vertexCount, 4, &ibuf);
 			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
-			if (!StvFsBits(fshader->GetID(), pipelineState_.blendState.blendEnabled))
+			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled))
 			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, vertexCount, 1);
 		} else {
 			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
-			if (!StvFsBits(fshader->GetID(), pipelineState_.blendState.blendEnabled))
+			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled))
 			renderManager->Draw(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, vertexCount);
 		}
 		if (useDepthRaster_) {
@@ -564,6 +566,7 @@ void DrawEngineVulkan::Flush() {
 				VulkanGeometryShader *gshader = nullptr;
 
 				shaderManager_->GetShaders(prim, swDec->VertexType(), &vshader, &fshader, &gshader, pipelineState_, false, false, decOptions_.expandAllWeightsToFloat, true);
+				if (fshader) stvUltimoFs = fshader->GetID();
 				_dbg_assert_msg_(!vshader->UseHWTransform(), "Bad vshader");
 				VulkanPipeline *pipeline = pipelineManager_->GetOrCreatePipeline(renderManager, pipelineLayout_, pipelineKey_, &swDec->decFmt, vshader, fshader, gshader, false, 0, framebufferManager_->GetMSAALevel(), false);
 				if (!pipeline || !pipeline->pipeline) {
@@ -658,7 +661,7 @@ void DrawEngineVulkan::Flush() {
 					}
 				}
 			}
-			if (!StvFsBits(fshader->GetID(), pipelineState_.blendState.blendEnabled))
+			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled))
 			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, result.drawNumTrans, 1);
 		} else if (result.action == SW_CLEAR) {
 			// Note: we won't get here if the clear is alpha but not color, or color but not alpha.
