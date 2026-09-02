@@ -410,17 +410,43 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 			result->safeHeight = scissorY2;
 		}
 	}
+	// STV (clrmesh): God of War limpia con una MALLA DE TRIANGULOS en modo clear
+	// (558 vertices, mismo color y z, cubre todo el scissor), no con rectangulos,
+	// y la deteccion de arriba no la ve: el pase carga color+depth enteros para
+	// pisarlos. Valvula debug.stv.clrmesh: 1 = convertir (cota superior; ignora
+	// que la mascara de alpha este apagada: el clear escribe el alpha del vertice).
+	static int stvClrMesh = -1;
+	if (stvClrMesh < 0) stvClrMesh = StvPropInt("debug.stv.clrmesh");
+	bool stvMeshClear = false;
+	if (stvClrMesh >= 1 && !reallyAClear && numDecodedVerts >= 3 && prim == GE_PRIM_TRIANGLES && gstate.isModeClear() && throughmode) {
+		const float sx2 = gstate.getScissorX2() + 1, sy2 = gstate.getScissorY2() + 1;
+		const u32 c = transformed[0].color0_32; const float z = transformed[0].z;
+		float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
+		bool uniforme = true;
+		for (int i = 0; i < numDecodedVerts; i++) {
+			if (transformed[i].color0_32 != c || transformed[i].z != z) { uniforme = false; break; }
+			minx = std::min(minx, transformed[i].x); maxx = std::max(maxx, transformed[i].x);
+			miny = std::min(miny, transformed[i].y); maxy = std::max(maxy, transformed[i].y);
+		}
+		if (uniforme && minx <= 0.0f && miny <= 0.0f && maxx >= sx2 && maxy >= sy2) {
+			stvMeshClear = true;
+			reallyAClear = true;
+			static int nMesh = 0; if (++nMesh % 600 == 1) STV_LOG("STVCLRMESH: %d mallas convertidas en clear (verts=%d color=%08x z=%.4f)", nMesh, numDecodedVerts, c, z);
+		}
+	}
 	if (params_.allowClear && reallyAClear && gl_extensions.gpuVendor != GPU_VENDOR_IMGTEC) {
 		// If alpha is not allowed to be separate, it must match for both depth/stencil and color.  Vulkan requires this.
 		bool alphaMatchesColor = gstate.isClearModeColorMask() == gstate.isClearModeAlphaMask();
 		bool depthMatchesStencil = gstate.isClearModeAlphaMask() == gstate.isClearModeDepthMask();
+		if (stvMeshClear) { alphaMatchesColor = true; depthMatchesStencil = true; }   // STV: cota superior
 		bool matchingComponents = params_.allowSeparateAlphaClear || (alphaMatchesColor && depthMatchesStencil);
 		bool stencilNotMasked = !gstate.isClearModeAlphaMask() || gstate.getStencilWriteMask() == 0x00;
 		if (matchingComponents && stencilNotMasked) {
 			DepthScaleFactors depthScale = GetDepthScaleFactors(gstate_c.UseFlags());
-			result->color = transformed[1].color0_32;
+			const TransformedVertex &vc = stvMeshClear ? transformed[0] : transformed[1];   // STV: en la malla todos son iguales
+			result->color = vc.color0_32;
 			// Need to rescale from a [0, 1] float.  This is the final transformed value.
-			result->depth = depthScale.EncodeFromU16((float)(int)(transformed[1].z * 65535.0f));
+			result->depth = depthScale.EncodeFromU16((float)(int)(vc.z * 65535.0f));
 			result->action = SW_CLEAR;
 			gpuStats.numClears++;
 			return;
