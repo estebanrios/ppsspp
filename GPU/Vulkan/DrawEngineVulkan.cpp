@@ -227,6 +227,20 @@ void StvVolcarContadores() {
 	stvDrawsTotal = 0; stvDrawsSinDepth = 0; stvCopiasBlend = 0;
 }
 
+// STV: descripcion compacta del primer draw de un paso de render (instrumento
+// del perfil por pase): primitiva, vertices, through/HW y el estado que decide
+// si el draw escribe cada pixel sin leer el anterior.
+static void StvDescribirPrimerDraw(VulkanRenderManager *rm, int prim, int verts, bool hw) {
+	if (!rm->StvPasoSinDraws()) return;
+	char b[96];
+	snprintf(b, sizeof(b), "p%d v%d %s%s bl%d at%d ct%d cm%06x z%d/%d/%d st%d lo%d",
+		prim, verts, hw ? "hw" : "sw", gstate.isModeThrough() ? "T" : "", (int)gstate.isAlphaBlendEnabled(),
+		gstate.isAlphaTestEnabled() ? (int)gstate.getAlphaTestFunction() : -1, (int)gstate.isColorTestEnabled(),
+		gstate.getColorMask() & 0xFFFFFF, (int)gstate.isDepthTestEnabled(), (int)gstate.isDepthWriteEnabled(), (int)gstate.getDepthTestFunction(),
+		gstate.isStencilTestEnabled() ? (int)gstate.getStencilTestFunction() : -1, gstate.isLogicOpEnabled() ? (int)gstate.getLogicOp() : -1);
+	rm->StvPrimerDraw(b);
+}
+
 void DrawEngineVulkan::Flush() {
 	if (!numDrawVerts_) {
 		return;
@@ -383,6 +397,7 @@ void DrawEngineVulkan::Flush() {
 		const uint32_t dynamicUBOOffsets[3] = {
 			baseUBOOffset, lightUBOOffset, boneUBOOffset,
 		};
+		StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
 		if (useElements) {
 			VkBuffer ibuf;
 			u32 ibOffset = (uint32_t)pushIndex_->Push(decIndex_, sizeof(uint16_t) * vertexCount, 4, &ibuf);
@@ -487,6 +502,7 @@ void DrawEngineVulkan::Flush() {
 		// Only here, where we know whether to clear or to draw primitives, should we actually set the current framebuffer! Because that gives use the opportunity
 		// to use a "pre-clear" render pass, for high efficiency on tilers.
 		if (result.action == SW_DRAW_INDEXED) {
+			StvDescribirPrimerDraw(renderManager, (int)prim, numDecodedVerts_, false);
 			// STV (dcload): primer draw del pase, cubre todo y escribe cada pixel sin
 			// depender del contenido anterior -> el pase puede no cargar color (DONT_CARE).
 			{
@@ -593,7 +609,7 @@ void DrawEngineVulkan::Flush() {
 		} else if (result.action == SW_CLEAR) {
 			// Note: we won't get here if the clear is alpha but not color, or color but not alpha.
 			bool clearColor = gstate.isClearModeColorMask();
-			bool clearAlpha = gstate.isClearModeAlphaMask();  // and stencil
+			bool clearAlpha = gstate.isClearModeAlphaMask() || result.stvClearAlpha;  // and stencil (STV: clear por malla)
 			bool clearDepth = gstate.isClearModeDepthMask();
 			Draw::Aspect mask = Draw::Aspect::NO_BIT;
 			// The Clear detection takes care of doing a regular draw instead if separate masking

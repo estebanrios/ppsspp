@@ -48,7 +48,8 @@ struct SoftwareTransformResult {
 	TransformedVertex *drawBuffer;
 	int drawNumTrans;
 	bool pixelMapped;
-	bool stvCubreTodo;   // STV: el draw cubre todo el render target (through, rects en tira o malla)
+	bool stvCubreTodo;
+	bool stvClearAlpha;   // STV: clear por malla con alpha pisado -> limpiar tambien alpha/stencil con el mismo valor   // STV: el draw cubre todo el render target (through, rects en tira o malla)
 };
 
 struct SoftwareTransformParams {

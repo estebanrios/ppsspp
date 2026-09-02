@@ -304,6 +304,10 @@ public:
 	// The old assert wasn't very helpful in figuring out what caused it anyway...
 	// STV (dcload): lo llama el motor de dibujo ANTES del primer draw de un paso
 	// cuando ese draw cubre todo el FB y escribe cada pixel sin leer el anterior.
+	bool StvPasoSinDraws() const { return curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER && curRenderStep_->render.numDraws == 0; }
+	void StvPrimerDraw(const char *desc) {
+		if (StvPasoSinDraws() && !curRenderStep_->render.stvPrimero[0]) { strncpy(curRenderStep_->render.stvPrimero, desc, sizeof(curRenderStep_->render.stvPrimero) - 1); curRenderStep_->render.stvPrimero[sizeof(curRenderStep_->render.stvPrimero) - 1] = 0; }
+	}
 	void StvPrimerDrawOpaco() {
 		if (curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER && curRenderStep_->render.numDraws == 0)
 			curRenderStep_->render.stvOpacoFull = true;
@@ -316,6 +320,7 @@ public:
 			if (d.depthWriteEnable) b |= 2;
 			if (d.depthTestEnable && d.depthCompareOp != VK_COMPARE_OP_ALWAYS) b |= 4;
 			if (d.stencilTestEnable) b |= 8;
+			if (d.stencilTestEnable && (d.front.compareOp != VK_COMPARE_OP_ALWAYS || d.front.passOp != VK_STENCIL_OP_KEEP || d.front.failOp != VK_STENCIL_OP_KEEP || d.front.depthFailOp != VK_STENCIL_OP_KEEP)) b |= 16;
 			curRenderStep_->render.stvDepthBits |= b;
 		}
 		_dbg_assert_(curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER && pipeline != nullptr);

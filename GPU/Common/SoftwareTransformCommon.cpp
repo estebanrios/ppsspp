@@ -377,6 +377,7 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 	// STV (dcload): ¿este draw cubre TODO el render target? Sirve para no cargar
 	// (loadOp DONT_CARE) el contenido anterior cuando ademas el estado es opaco.
 	result->stvCubreTodo = false;
+	result->stvClearAlpha = false;
 	if (throughmode && numDecodedVerts >= 2 && (prim == GE_PRIM_RECTANGLES || prim == GE_PRIM_TRIANGLES)) {
 		const int sx2 = gstate.getScissorX2() + 1, sy2 = gstate.getScissorY2() + 1;
 		if (gstate.getScissorX1() == 0 && gstate.getScissorY1() == 0 && sx2 >= (int)gstate_c.curRTWidth && sy2 >= (int)gstate_c.curRTHeight) {
@@ -483,6 +484,11 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 			if (reticula && alphaOk) {
 				stvMeshClear = true;
 				reallyAClear = true;
+				// Si la mascara de alpha esta apagada y aun asi convertimos, el color ya
+				// recibe el alpha del vertice: el stencil (el MISMO canal en la PSP) tiene
+				// que recibirlo tambien. Ademas en Mali depth y stencil comparten buffer:
+				// un stencil en KEEP obliga a cargar lo que el clear de depth se ahorraba.
+				result->stvClearAlpha = gstate.isClearModeColorMask() != gstate.isClearModeAlphaMask();
 				static int nMesh = 0; if (++nMesh % 600 == 1) STV_LOG("STVCLRMESH: %d mallas convertidas en clear (verts=%d reticula %zux%zu color=%08x z=%.4f)", nMesh, numDecodedVerts, xs.size(), ys.size(), c, z);
 			} else {
 				static int nRech = 0; if (nRech++ < 5) STV_LOG("STVCLRMESH rechazo: reticula=%d (%zu x %zu, verts=%d) alphaOk=%d", (int)reticula, xs.size(), ys.size(), numDecodedVerts, (int)alphaOk);

@@ -1138,6 +1138,7 @@ void VulkanRenderManager::BindFramebufferAsRenderTarget(VKRFramebuffer *fb, VKRR
 	step->render.numReads = 0;
 	step->render.stvDepthBits = 0;
 	step->render.stvOpacoFull = false;
+	step->render.stvPrimero[0] = 0;
 	step->render.finalColorLayout = !fb ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
 	step->render.finalDepthStencilLayout = !fb ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
 	// pipelineFlags, renderArea and renderPassType get filled in when we finalize the step. Do not read from them before that.

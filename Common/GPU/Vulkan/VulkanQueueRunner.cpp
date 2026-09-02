@@ -438,6 +438,7 @@ void VulkanQueueRunner::RunSteps(std::vector<VKRStep *> &steps, int curFrame, Fr
 						step.render.renderArea.offset.x, step.render.renderArea.offset.y, step.render.renderArea.extent.width, step.render.renderArea.extent.height);
 					d += extra;
 					if (step.render.stvOpacoFull) d += " OPACO";
+					if (step.render.stvPrimero[0]) { d += " 1o:"; d += step.render.stvPrimero; }
 				}
 				profile->timestampDescriptions.push_back(d);
 			}
