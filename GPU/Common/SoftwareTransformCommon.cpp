@@ -464,7 +464,10 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 				if (std::find(xs.begin(), xs.end(), transformed[i].x) == xs.end()) xs.push_back(transformed[i].x);
 				if (std::find(ys.begin(), ys.end(), transformed[i].y) == ys.end()) ys.push_back(transformed[i].y);
 			}
-			bool reticula = xs.size() >= 2 && ys.size() >= 2 && xs.size() * ys.size() == (size_t)numDecodedVerts && xs.size() <= 256 && ys.size() <= 256;
+			// Los vertices pueden venir DUPLICADOS (GoS: 9 bandas de 2 filas x 31,
+			// con las filas compartidas repetidas: 558 vertices para 31x10 puntos).
+			// Lo que se exige es que ESTE cada punto de la reticula, no que no sobren.
+			bool reticula = xs.size() >= 2 && ys.size() >= 2 && xs.size() * ys.size() <= (size_t)numDecodedVerts && xs.size() <= 256 && ys.size() <= 256;
 			if (reticula) {
 				std::vector<uint8_t> visto(xs.size() * ys.size(), 0);
 				size_t distintos = 0;
