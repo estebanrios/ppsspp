@@ -5,6 +5,7 @@
 #include "Common/GPU/Vulkan/VulkanRenderManager.h"
 #include "Common/Log.h"
 #include "Common/TimeUtil.h"
+#include "Common/StvProp.h"
 
 using namespace PPSSPP_VK;
 
@@ -264,6 +265,38 @@ void VulkanQueueRunner::PreprocessSteps(std::vector<VKRStep *> &steps) {
 					break;
 				}
 			}
+		}
+	}
+
+	// STV (experimento dstore): si ningun paso posterior DE ESTE CUADRO vuelve a
+	// tocar el framebuffer, su depth/stencil no se vuelca (DONT_CARE). Es una
+	// COTA SUPERIOR: el cuadro siguiente puede necesitarlo (si lo carga con
+	// KEEP habra artefactos). Valvula debug.stv.dstore=1; contadores por log.
+	{
+		static int stvDstore = -1;
+		if (stvDstore < 0) { stvDstore = StvPropInt("debug.stv.dstore"); STV_LOG("STVDSTORE: modo=%d", stvDstore); }
+		if (stvDstore == 1) {
+			int podados = 0, conDepth = 0;
+			for (int i = 0; i < (int)steps.size(); i++) {
+				if (steps[i]->stepType != VKRStepType::RENDER || !steps[i]->render.framebuffer) continue;
+				VKRFramebuffer *fb = steps[i]->render.framebuffer;
+				if (!fb->depth.image) continue;
+				conDepth++;
+				bool tocado = false;
+				for (int j = i + 1; j < (int)steps.size() && !tocado; j++) {
+					const VKRStep *s = steps[j];
+					if (s->dependencies.contains(fb)) tocado = true;
+					switch (s->stepType) {
+					case VKRStepType::RENDER: if (s->render.framebuffer == fb) tocado = true; break;
+					case VKRStepType::COPY: case VKRStepType::BLIT: if (s->copy.src == fb || s->copy.dst == fb) tocado = true; break;
+					case VKRStepType::READBACK: if (s->readback.src == fb) tocado = true; break;
+					default: break;
+					}
+				}
+				if (!tocado) { steps[i]->render.depthStore = VKRRenderPassStoreAction::DONT_CARE; steps[i]->render.stencilStore = VKRRenderPassStoreAction::DONT_CARE; podados++; }
+			}
+			static int cad = 0;
+			if (++cad >= 300) { cad = 0; STV_LOG("STVDSTORE: cuadro con %d pases con depth, %d sin volcar", conDepth, podados); }
 		}
 	}
 
@@ -1689,6 +1722,10 @@ void VulkanQueueRunner::ResizeReadbackBuffer(CachedReadback *readback, VkDeviceS
 }
 
 void VulkanQueueRunner::PerformReadback(const VKRStep &step, VkCommandBuffer cmd, FrameData &frameData) {
+	if (step.readback.src && StvPropInt("debug.stv.afbc") == 1) {   // STV: la imagen no tiene TRANSFER_SRC
+		static int avisos = 0; if (avisos++ < 5) STV_LOG("STVAFBC: readback de framebuffer SALTEADO (%s)", step.tag);
+		return;
+	}
 	VkImage image;
 	VkImageLayout copyLayout;
 	// Special case for backbuffer readbacks.

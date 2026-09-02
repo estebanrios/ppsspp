@@ -1,6 +1,7 @@
 #include "Common/StringUtils.h"
 #include "Common/GPU/Vulkan/VulkanFramebuffer.h"
 #include "Common/GPU/Vulkan/VulkanQueueRunner.h"
+#include "Common/StvProp.h"
 
 static const char * const rpTypeDebugNames[] = {
 	"RENDER",
@@ -185,6 +186,15 @@ void VKRFramebuffer::CreateImage(VulkanContext *vulkan, VulkanBarrierBatch *barr
 		ici.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 	} else {
 		ici.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+	}
+	// STV (experimento AFBC): en Mali, los bits TRANSFER en un render target
+	// pueden desactivar la compresion del framebuffer; sin ellos, toda copia y
+	// blit entre framebuffers va por raster (caps apagadas en thin3d_vulkan) y
+	// los readbacks se saltean. Valvula: debug.stv.afbc=1, leida al crear.
+	{
+		static int stvAfbc = -1;
+		if (stvAfbc < 0) { stvAfbc = StvPropInt("debug.stv.afbc"); STV_LOG("STVAFBC: modo=%d (imagenes de FB %s bits TRANSFER)", stvAfbc, stvAfbc ? "SIN" : "con"); }
+		if (stvAfbc == 1) ici.usage &= ~(VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
 	}
 
 	VmaAllocationCreateInfo allocCreateInfo{};

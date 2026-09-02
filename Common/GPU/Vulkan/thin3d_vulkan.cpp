@@ -27,6 +27,7 @@
 #include "Common/Data/Convert/SmallDataConvert.h"
 #include "Common/GPU/thin3d.h"
 #include "Common/GPU/Vulkan/VulkanRenderManager.h"
+#include "Common/StvProp.h"
 #include "Common/GPU/Vulkan/VulkanContext.h"
 #include "Common/GPU/Vulkan/VulkanImage.h"
 #include "Common/GPU/Vulkan/VulkanMemory.h"
@@ -936,6 +937,15 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 	caps_.framebufferStencilBlitSupported = caps_.framebufferDepthBlitSupported;
 	caps_.framebufferDepthCopySupported = true;   // Will pretty much always be the case.
 	caps_.framebufferSeparateDepthCopySupported = true;   // Will pretty much always be the case.
+	if (StvPropInt("debug.stv.afbc") == 1) {   // STV: sin bits TRANSFER no hay vkCmdCopy/Blit entre FBs: todo por raster
+		caps_.framebufferBlitSupported = false;
+		caps_.framebufferCopySupported = false;
+		caps_.framebufferDepthBlitSupported = false;
+		caps_.framebufferStencilBlitSupported = false;
+		caps_.framebufferDepthCopySupported = false;
+		caps_.framebufferSeparateDepthCopySupported = false;
+		STV_LOG("STVAFBC: caps de copia/blit entre framebuffers APAGADAS");
+	}
 	// This doesn't affect what depth/stencil format is actually used, see VulkanQueueRunner.
 	caps_.preferredDepthBufferFormat = DataFormatFromVulkanDepth(vulkan->GetDeviceInfo().preferredDepthStencilFormat);
 	caps_.texture3DSupported = true;
