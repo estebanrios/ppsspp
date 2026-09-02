@@ -16,6 +16,7 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include <algorithm>
+#include <vector>
 #include <cmath>
 
 #include "Common/CPUDetect.h"
@@ -452,20 +453,36 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 			miny = std::min(miny, transformed[i].y); maxy = std::max(maxy, transformed[i].y);
 		}
 		if (uniforme && minx <= 0.0f && miny <= 0.0f && maxx >= sx2 && maxy >= sy2) {
-			double area = 0.0;
-			for (int i = 0; i + 2 < numDecodedVerts; i += 3) {
-				const TransformedVertex &a = transformed[i], &b = transformed[i + 1], &d = transformed[i + 2];
-				area += fabs((double)(b.x - a.x) * (d.y - a.y) - (double)(d.x - a.x) * (b.y - a.y)) * 0.5;
+			// La malla es INDEXADA (558 vertices = reticula de 31x18 en GoS): aca no
+			// estan los indices, asi que la prueba de "sin huecos" es la de reticula
+			// completa: X = valores unicos de x, Y = de y, y esta presente CADA par
+			// (x, y). Un juego que manda la reticula entera del scissor en modo clear
+			// con un solo color y z esta limpiando la pantalla.
+			std::vector<float> xs, ys;
+			xs.reserve(64); ys.reserve(64);
+			for (int i = 0; i < numDecodedVerts; i++) {
+				if (std::find(xs.begin(), xs.end(), transformed[i].x) == xs.end()) xs.push_back(transformed[i].x);
+				if (std::find(ys.begin(), ys.end(), transformed[i].y) == ys.end()) ys.push_back(transformed[i].y);
 			}
-			const double caja = (double)(maxx - minx) * (maxy - miny);
+			bool reticula = xs.size() >= 2 && ys.size() >= 2 && xs.size() * ys.size() == (size_t)numDecodedVerts && xs.size() <= 256 && ys.size() <= 256;
+			if (reticula) {
+				std::vector<uint8_t> visto(xs.size() * ys.size(), 0);
+				size_t distintos = 0;
+				for (int i = 0; i < numDecodedVerts; i++) {
+					size_t ix = std::find(xs.begin(), xs.end(), transformed[i].x) - xs.begin();
+					size_t iy = std::find(ys.begin(), ys.end(), transformed[i].y) - ys.begin();
+					if (!visto[iy * xs.size() + ix]) { visto[iy * xs.size() + ix] = 1; distintos++; }
+				}
+				reticula = distintos == xs.size() * ys.size();
+			}
 			bool alphaOk = gstate.isClearModeColorMask() == gstate.isClearModeAlphaMask()
 				|| stvClrMesh >= 2 || PSP_CoreParameter().compat.flags().ClearMeshIgnoresAlpha;
-			if (caja > 0 && fabs(area - caja) <= caja * 0.005 && alphaOk) {
+			if (reticula && alphaOk) {
 				stvMeshClear = true;
 				reallyAClear = true;
-				static int nMesh = 0; if (++nMesh % 600 == 1) STV_LOG("STVCLRMESH: %d mallas convertidas en clear (verts=%d color=%08x z=%.4f area=%.0f caja=%.0f)", nMesh, numDecodedVerts, c, z, area, caja);
+				static int nMesh = 0; if (++nMesh % 600 == 1) STV_LOG("STVCLRMESH: %d mallas convertidas en clear (verts=%d reticula %zux%zu color=%08x z=%.4f)", nMesh, numDecodedVerts, xs.size(), ys.size(), c, z);
 			} else {
-				static int nRech = 0; if (nRech++ < 5) STV_LOG("STVCLRMESH rechazo: area=%.1f caja=%.1f (min %.1f,%.1f max %.1f,%.1f sx2=%.0f sy2=%.0f) alphaOk=%d verts=%d", area, caja, minx, miny, maxx, maxy, sx2, sy2, (int)alphaOk, numDecodedVerts);
+				static int nRech = 0; if (nRech++ < 5) STV_LOG("STVCLRMESH rechazo: reticula=%d (%zu x %zu, verts=%d) alphaOk=%d", (int)reticula, xs.size(), ys.size(), numDecodedVerts, (int)alphaOk);
 			}
 		} else {
 			static int nRech2 = 0; if (nRech2++ < 5) STV_LOG("STVCLRMESH rechazo previo: uniforme=%d min %.1f,%.1f max %.1f,%.1f sx2=%.0f sy2=%.0f", (int)uniforme, minx, miny, maxx, maxy, sx2, sy2);
