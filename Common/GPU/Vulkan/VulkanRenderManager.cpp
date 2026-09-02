@@ -765,7 +765,7 @@ void VulkanRenderManager::BeginFrame(bool enableProfiling, bool enableLogProfile
 				uint64_t timestampDiffMask = validBits == 64 ? 0xFFFFFFFFFFFFFFFFULL : ((1ULL << validBits) - 1);
 				std::stringstream str;
 
-				char line[256];
+				char line[1024];
 				totalGPUTimeMs_.Update(((double)((queryResults[numQueries - 1] - queryResults[0]) & timestampDiffMask) * timestampConversionFactor));
 				totalGPUTimeMs_.Format(line, sizeof(line));
 				str << line;
@@ -829,7 +829,7 @@ void VulkanRenderManager::BeginFrame(bool enableProfiling, bool enableLogProfile
 			}
 		} else {
 			std::stringstream str;
-			char line[256];
+			char line[1024];
 			renderCPUTimeMs_.Update((frameData.profile.cpuEndTime - frameData.profile.cpuStartTime) * 1000.0);
 			renderCPUTimeMs_.Format(line, sizeof(line));
 			str << line;
