@@ -67,6 +67,7 @@ struct CompatFlags {
 	bool ForceUMDDelay;
 	bool ForceMax60FPS;
 	bool GoWFramerateHack60;
+	bool ClearMeshIgnoresAlpha;   // STV: el clear por malla de triangulos puede pisar el alpha (el juego no lo usa)
 	bool FramerateHack30;
 	bool JitInvalidationHack;
 	bool HideISOFiles;

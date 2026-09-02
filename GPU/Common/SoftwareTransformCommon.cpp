@@ -430,14 +430,18 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 		}
 	}
 	// STV (clrmesh): God of War limpia con una MALLA DE TRIANGULOS en modo clear
-	// (558 vertices, mismo color y z, cubre todo el scissor), no con rectangulos,
-	// y la deteccion de arriba no la ve: el pase carga color+depth enteros para
-	// pisarlos. Valvula debug.stv.clrmesh: 1 = convertir (cota superior; ignora
-	// que la mascara de alpha este apagada: el clear escribe el alpha del vertice).
+	// (558 vertices, mismo color y z), no con rectangulos, y la deteccion de
+	// arriba no la ve: el pase carga color+depth enteros para pisarlos.
+	// Condiciones: through, triangulos, todos los vertices con el mismo color y
+	// z, la caja envolvente cubre el scissor Y la suma de areas de los triangulos
+	// es el area de la caja (sin huecos ni solapes). Si la mascara de alpha no
+	// coincide con la de color, Vulkan no puede respetarla: solo se convierte con
+	// la bandera de compat ClearMeshIgnoresAlpha (o debug.stv.clrmesh=2).
+	// debug.stv.clrmesh: vacio/1 = activo, 0 = apagado, 2 = ignorar alpha siempre.
 	static int stvClrMesh = -1;
-	if (stvClrMesh < 0) stvClrMesh = StvPropInt("debug.stv.clrmesh");
+	if (stvClrMesh < 0) { stvClrMesh = StvPropInt("debug.stv.clrmesh"); if (stvClrMesh == 0) { char v[8] = {0}; if (__system_property_get("debug.stv.clrmesh", v) <= 0) stvClrMesh = 1; } }
 	bool stvMeshClear = false;
-	if (stvClrMesh >= 1 && !reallyAClear && numDecodedVerts >= 3 && prim == GE_PRIM_TRIANGLES && gstate.isModeClear() && throughmode) {
+	if (stvClrMesh >= 1 && !reallyAClear && numDecodedVerts >= 6 && prim == GE_PRIM_TRIANGLES && gstate.isModeClear() && throughmode) {
 		const float sx2 = gstate.getScissorX2() + 1, sy2 = gstate.getScissorY2() + 1;
 		const u32 c = transformed[0].color0_32; const float z = transformed[0].z;
 		float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
@@ -448,9 +452,19 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 			miny = std::min(miny, transformed[i].y); maxy = std::max(maxy, transformed[i].y);
 		}
 		if (uniforme && minx <= 0.0f && miny <= 0.0f && maxx >= sx2 && maxy >= sy2) {
-			stvMeshClear = true;
-			reallyAClear = true;
-			static int nMesh = 0; if (++nMesh % 600 == 1) STV_LOG("STVCLRMESH: %d mallas convertidas en clear (verts=%d color=%08x z=%.4f)", nMesh, numDecodedVerts, c, z);
+			double area = 0.0;
+			for (int i = 0; i + 2 < numDecodedVerts; i += 3) {
+				const TransformedVertex &a = transformed[i], &b = transformed[i + 1], &d = transformed[i + 2];
+				area += fabs((double)(b.x - a.x) * (d.y - a.y) - (double)(d.x - a.x) * (b.y - a.y)) * 0.5;
+			}
+			const double caja = (double)(maxx - minx) * (maxy - miny);
+			bool alphaOk = gstate.isClearModeColorMask() == gstate.isClearModeAlphaMask()
+				|| stvClrMesh >= 2 || PSP_CoreParameter().compat.flags().ClearMeshIgnoresAlpha;
+			if (caja > 0 && fabs(area - caja) <= caja * 0.005 && alphaOk) {
+				stvMeshClear = true;
+				reallyAClear = true;
+				static int nMesh = 0; if (++nMesh % 600 == 1) STV_LOG("STVCLRMESH: %d mallas convertidas en clear (verts=%d color=%08x z=%.4f area=%.0f caja=%.0f)", nMesh, numDecodedVerts, c, z, area, caja);
+			}
 		}
 	}
 	if (params_.allowClear && reallyAClear && gl_extensions.gpuVendor != GPU_VENDOR_IMGTEC) {
