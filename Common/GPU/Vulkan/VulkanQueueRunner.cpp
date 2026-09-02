@@ -1450,6 +1450,10 @@ VKRRenderPass *VulkanQueueRunner::PerformBindFramebufferAsRenderTarget(const VKR
 	rp_begin.renderArea = rc;
 	rp_begin.clearValueCount = numClearVals;
 	rp_begin.pClearValues = numClearVals ? clearVal : nullptr;
+	{	// STV: granularidad real del area de render, una sola vez por log
+		static bool stvGranLog = false;
+		if (!stvGranLog) { stvGranLog = true; VkExtent2D g{}; vkGetRenderAreaGranularity(vulkan_->GetDevice(), rp_begin.renderPass, &g); STV_LOG("STVAREA: granularidad del area de render = %ux%u", g.width, g.height); }
+	}
 	vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
 
 	return renderPass;

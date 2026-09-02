@@ -1026,6 +1026,17 @@ void VulkanRenderManager::EndCurRenderStep() {
 	// We don't do this optimization for very small targets, probably not worth it.
 	if (!curRenderArea_.Empty() && (curWidth_ > 32 && curHeight_ > 32)) {
 		curRenderStep_->render.renderArea = curRenderArea_.ToVkRect2D();
+		if (StvModoArea() >= 2) {
+			// STV (area): un area que no cae en multiplos del tile le cuesta al driver
+			// (medido: 1297x409 tardaba MAS que 1440x816). Alinear hacia afuera a
+			// 32 px, sin pasarse del framebuffer.
+			VkRect2D &ra = curRenderStep_->render.renderArea;
+			const int G = 32;
+			int x1 = (ra.offset.x / G) * G, y1 = (ra.offset.y / G) * G;
+			int x2 = ((ra.offset.x + (int)ra.extent.width + G - 1) / G) * G, y2 = ((ra.offset.y + (int)ra.extent.height + G - 1) / G) * G;
+			x2 = std::min(x2, curWidth_); y2 = std::min(y2, curHeight_);
+			ra.offset = { x1, y1 }; ra.extent = { (uint32_t)(x2 - x1), (uint32_t)(y2 - y1) };
+		}
 	} else {
 		curRenderStep_->render.renderArea.offset = {};
 		curRenderStep_->render.renderArea.extent = { (uint32_t)curWidth_, (uint32_t)curHeight_ };
