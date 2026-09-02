@@ -162,7 +162,8 @@ struct VKRStep {
 			// Downloads and textures from this pass.
 			int numReads;
 			uint8_t stvDepthBits;
-			bool stvOpacoFull;     // STV: el primer draw del paso cubre todo el FB y escribe cada pixel
+			bool stvOpacoFull;     // STV: el primer draw del paso es opaco y cubre por completo stvOpacoRect
+			int stvOpacoRect[4];   // STV: x1,y1,x2,y2 en pixeles del render target
 			char stvPrimero[96];   // STV: descripcion del primer draw del paso (instrumento)  // STV: union de los pipelines del paso: 1 test, 2 write, 4 compare!=ALWAYS, 8 stencil
 			VkImageLayout finalColorLayout;
 			VkImageLayout finalDepthStencilLayout;

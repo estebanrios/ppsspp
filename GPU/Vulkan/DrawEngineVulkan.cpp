@@ -38,6 +38,7 @@
 #include "GPU/Common/ShaderUniforms.h"
 #include "GPU/Vulkan/DrawEngineVulkan.h"
 #include "Common/StvProp.h"
+#include <cmath>
 #include "GPU/Vulkan/TextureCacheVulkan.h"
 #include "GPU/Vulkan/ShaderManagerVulkan.h"
 #include "GPU/Vulkan/PipelineManagerVulkan.h"
@@ -397,12 +398,13 @@ void DrawEngineVulkan::Flush() {
 		const uint32_t dynamicUBOOffsets[3] = {
 			baseUBOOffset, lightUBOOffset, boneUBOOffset,
 		};
-		StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
 		if (useElements) {
 			VkBuffer ibuf;
 			u32 ibOffset = (uint32_t)pushIndex_->Push(decIndex_, sizeof(uint16_t) * vertexCount, 4, &ibuf);
+			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
 			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, vertexCount, 1);
 		} else {
+			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
 			renderManager->Draw(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, vertexCount);
 		}
 		if (useDepthRaster_) {
@@ -502,23 +504,6 @@ void DrawEngineVulkan::Flush() {
 		// Only here, where we know whether to clear or to draw primitives, should we actually set the current framebuffer! Because that gives use the opportunity
 		// to use a "pre-clear" render pass, for high efficiency on tilers.
 		if (result.action == SW_DRAW_INDEXED) {
-			StvDescribirPrimerDraw(renderManager, (int)prim, numDecodedVerts_, false);
-			// STV (dcload): primer draw del pase, cubre todo y escribe cada pixel sin
-			// depender del contenido anterior -> el pase puede no cargar color (DONT_CARE).
-			{
-				static int stvDc = -1;
-				if (stvDc < 0) stvDc = StvPropInt("debug.stv.dcload");
-				if (stvDc >= 1 && result.stvCubreTodo && !gstate.isModeClear()) {
-					bool opaco = !gstate.isAlphaBlendEnabled()
-						&& (!gstate.isAlphaTestEnabled() || gstate.getAlphaTestFunction() == GE_COMP_ALWAYS)
-						&& !gstate.isColorTestEnabled()
-						&& gstate.getColorMask() == 0
-						&& (!gstate.isLogicOpEnabled() || gstate.getLogicOp() == GE_LOGIC_COPY)
-						&& (!gstate.isDepthTestEnabled() || gstate.getDepthTestFunction() == GE_COMP_ALWAYS)
-						&& (!gstate.isStencilTestEnabled() || gstate.getStencilTestFunction() == GE_COMP_ALWAYS);
-					if (opaco) renderManager->StvPrimerDrawOpaco();
-				}
-			}
 			if (textureNeedsApply) {
 				gstate_c.pixelMapped = result.pixelMapped;
 				gstate_c.dstSquared = false;
@@ -605,6 +590,28 @@ void DrawEngineVulkan::Flush() {
 			VkBuffer vbuf, ibuf;
 			u32 vbOffset = (uint32_t)pushVertex_->Push(result.drawBuffer, numDecodedVerts_ * sizeof(TransformedVertex), 4, &vbuf);
 			u32 ibOffset = (uint32_t)pushIndex_->Push(inds, sizeof(short) * result.drawNumTrans, 4, &ibuf);
+			// STV: describir el primer draw del paso y, si es opaco y cubre su caja,
+			// avisar al runner (con la caja en pixeles del render target). DESPUES de
+			// aplicar la textura: eso puede copiar y re-abrir el pase.
+			StvDescribirPrimerDraw(renderManager, (int)prim, numDecodedVerts_, false);
+			{
+				static int stvDc = -1;
+				if (stvDc < 0) stvDc = StvPropInt("debug.stv.dcload");
+				if (stvDc >= 1 && result.stvCubre && !gstate.isModeClear() && renderManager->StvPasoSinDraws()) {
+					bool opaco = !gstate.isAlphaBlendEnabled()
+						&& (!gstate.isAlphaTestEnabled() || gstate.getAlphaTestFunction() == GE_COMP_ALWAYS)
+						&& !gstate.isColorTestEnabled()
+						&& gstate.getColorMask() == 0
+						&& (!gstate.isLogicOpEnabled() || gstate.getLogicOp() == GE_LOGIC_COPY)
+						&& (!gstate.isDepthTestEnabled() || gstate.getDepthTestFunction() == GE_COMP_ALWAYS)
+						&& (!gstate.isStencilTestEnabled() || gstate.getStencilTestFunction() == GE_COMP_ALWAYS);
+					if (opaco) {
+						float ex = gstate_c.curRTWidth ? (float)gstate_c.curRTRenderWidth / gstate_c.curRTWidth : 1.0f;
+						float ey = gstate_c.curRTHeight ? (float)gstate_c.curRTRenderHeight / gstate_c.curRTHeight : 1.0f;
+						renderManager->StvPrimerDrawOpaco((int)floorf(result.stvBbox[0] * ex), (int)floorf(result.stvBbox[1] * ey), (int)ceilf(result.stvBbox[2] * ex), (int)ceilf(result.stvBbox[3] * ey));
+					}
+				}
+			}
 			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, result.drawNumTrans, 1);
 		} else if (result.action == SW_CLEAR) {
 			// Note: we won't get here if the clear is alpha but not color, or color but not alpha.

@@ -311,8 +311,12 @@ void VulkanQueueRunner::PreprocessSteps(std::vector<VKRStep *> &steps) {
 				if (steps[i]->stepType != VKRStepType::RENDER || !steps[i]->render.framebuffer) continue;
 				nPasos++;
 				if (steps[i]->render.stvOpacoFull && steps[i]->render.colorLoad == VKRRenderPassLoadAction::KEEP) {
-					nCand++;
-					if (stvDc >= 2) { steps[i]->render.colorLoad = VKRRenderPassLoadAction::DONT_CARE; nAplic++; }
+					const VkRect2D &ra = steps[i]->render.renderArea; const int *r = steps[i]->render.stvOpacoRect;
+					bool cubre = r[0] <= ra.offset.x && r[1] <= ra.offset.y && r[2] >= ra.offset.x + (int)ra.extent.width && r[3] >= ra.offset.y + (int)ra.extent.height;
+					if (cubre) {
+						nCand++;
+						if (stvDc >= 2) { steps[i]->render.colorLoad = VKRRenderPassLoadAction::DONT_CARE; nAplic++; }
+					}
 				}
 			}
 			if (++cad >= 300) { cad = 0; STV_LOG("STVDCLOAD: en 300 cuadros %d pases, %d candidatos, %d aplicados", nPasos, nCand, nAplic); nPasos = nCand = nAplic = 0; }
@@ -437,7 +441,7 @@ void VulkanQueueRunner::RunSteps(std::vector<VKRStep *> &steps, int curFrame, Fr
 						(int)step.render.stencilLoad, (int)step.render.stencilStore, (int)step.render.stvDepthBits, step.render.numReads,
 						step.render.renderArea.offset.x, step.render.renderArea.offset.y, step.render.renderArea.extent.width, step.render.renderArea.extent.height);
 					d += extra;
-					if (step.render.stvOpacoFull) d += " OPACO";
+					if (step.render.stvOpacoFull) { char o[64]; snprintf(o, sizeof(o), " OPACO(%d,%d-%d,%d)", step.render.stvOpacoRect[0], step.render.stvOpacoRect[1], step.render.stvOpacoRect[2], step.render.stvOpacoRect[3]); d += o; }
 					if (step.render.stvPrimero[0]) { d += " 1o:"; d += step.render.stvPrimero; }
 				}
 				profile->timestampDescriptions.push_back(d);

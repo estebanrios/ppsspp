@@ -308,9 +308,12 @@ public:
 	void StvPrimerDraw(const char *desc) {
 		if (StvPasoSinDraws() && !curRenderStep_->render.stvPrimero[0]) { strncpy(curRenderStep_->render.stvPrimero, desc, sizeof(curRenderStep_->render.stvPrimero) - 1); curRenderStep_->render.stvPrimero[sizeof(curRenderStep_->render.stvPrimero) - 1] = 0; }
 	}
-	void StvPrimerDrawOpaco() {
-		if (curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER && curRenderStep_->render.numDraws == 0)
+	void StvPrimerDrawOpaco(int x1, int y1, int x2, int y2) {
+		if (StvPasoSinDraws()) {
 			curRenderStep_->render.stvOpacoFull = true;
+			curRenderStep_->render.stvOpacoRect[0] = x1; curRenderStep_->render.stvOpacoRect[1] = y1;
+			curRenderStep_->render.stvOpacoRect[2] = x2; curRenderStep_->render.stvOpacoRect[3] = y2;
+		}
 	}
 	bool BindPipeline(VKRGraphicsPipeline *pipeline, PipelineFlags flags, VKRPipelineLayout *pipelineLayout) {
 		if (pipeline && pipeline->desc && curRenderStep_) {   // STV: que depth usa de verdad cada paso

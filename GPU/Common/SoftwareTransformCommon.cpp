@@ -374,23 +374,41 @@ void SoftwareTransform::Transform(int prim, u32 vertType, const DecVtxFormat &de
 	// TODO: This bleeds outside the play area in non-buffered mode. Big deal? Probably not.
 	// TODO: Allow creating a depth clear and a color draw.
 	bool reallyAClear = false;
-	// STV (dcload): ¿este draw cubre TODO el render target? Sirve para no cargar
-	// (loadOp DONT_CARE) el contenido anterior cuando ademas el estado es opaco.
-	result->stvCubreTodo = false;
-	result->stvClearAlpha = false;
+	// STV (dcload): caja envolvente del draw y si la cubre POR COMPLETO. En Vulkan
+	// el loadOp solo afecta al area de render del pase, asi que la pregunta util
+	// no es "cubre el framebuffer" sino "cubre el area que el pase termina
+	// tocando": eso se decide en el runner comparando esta caja con renderArea.
+	result->stvCubre = false;
+	result->stvBbox[0] = result->stvBbox[1] = result->stvBbox[2] = result->stvBbox[3] = 0.0f;
 	if (throughmode && numDecodedVerts >= 2 && (prim == GE_PRIM_RECTANGLES || prim == GE_PRIM_TRIANGLES)) {
-		const int sx2 = gstate.getScissorX2() + 1, sy2 = gstate.getScissorY2() + 1;
-		if (gstate.getScissorX1() == 0 && gstate.getScissorY1() == 0 && sx2 >= (int)gstate_c.curRTWidth && sy2 >= (int)gstate_c.curRTHeight) {
-			if (prim == GE_PRIM_RECTANGLES) {
-				result->stvCubreTodo = IsReallyAClear(transformed, numDecodedVerts, (float)sx2, (float)sy2);
-			} else if (numDecodedVerts >= 6) {
-				float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
+		float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
+		for (int i = 0; i < numDecodedVerts; i++) {
+			minx = std::min(minx, transformed[i].x); maxx = std::max(maxx, transformed[i].x);
+			miny = std::min(miny, transformed[i].y); maxy = std::max(maxy, transformed[i].y);
+		}
+		result->stvBbox[0] = minx; result->stvBbox[1] = miny; result->stvBbox[2] = maxx; result->stvBbox[3] = maxy;
+		if (prim == GE_PRIM_RECTANGLES) {
+			if (numDecodedVerts == 2) {
+				result->stvCubre = true;   // un solo rectangulo: cubre su caja por definicion
+			} else {
+				// tira de rectangulos: la prueba de IsReallyAClear contra la propia caja
+				result->stvCubre = minx <= 0.0f && miny <= 0.0f && IsReallyAClear(transformed, numDecodedVerts, maxx, maxy);
+			}
+		} else if (numDecodedVerts >= 6 && numDecodedVerts <= 4096) {
+			// reticula completa (vertices duplicados permitidos), como en el clear por malla
+			std::vector<float> xs, ys;
+			for (int i = 0; i < numDecodedVerts; i++) {
+				if (std::find(xs.begin(), xs.end(), transformed[i].x) == xs.end()) xs.push_back(transformed[i].x);
+				if (std::find(ys.begin(), ys.end(), transformed[i].y) == ys.end()) ys.push_back(transformed[i].y);
+			}
+			if (xs.size() >= 2 && ys.size() >= 2 && xs.size() <= 256 && ys.size() <= 256 && xs.size() * ys.size() <= (size_t)numDecodedVerts) {
+				std::vector<uint8_t> visto(xs.size() * ys.size(), 0); size_t distintos = 0;
 				for (int i = 0; i < numDecodedVerts; i++) {
-					minx = std::min(minx, transformed[i].x); maxx = std::max(maxx, transformed[i].x);
-					miny = std::min(miny, transformed[i].y); maxy = std::max(maxy, transformed[i].y);
+					size_t ix = std::find(xs.begin(), xs.end(), transformed[i].x) - xs.begin();
+					size_t iy = std::find(ys.begin(), ys.end(), transformed[i].y) - ys.begin();
+					if (!visto[iy * xs.size() + ix]) { visto[iy * xs.size() + ix] = 1; distintos++; }
 				}
-				// Heuristica (caja envolvente): una malla que cubre la caja entera. Vale para el experimento.
-				result->stvCubreTodo = minx <= 0.0f && miny <= 0.0f && maxx >= sx2 && maxy >= sy2;
+				result->stvCubre = distintos == xs.size() * ys.size();
 			}
 		}
 	}
