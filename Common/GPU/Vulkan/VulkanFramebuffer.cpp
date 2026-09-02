@@ -205,6 +205,21 @@ void VKRFramebuffer::CreateImage(VulkanContext *vulkan, VulkanBarrierBatch *barr
 	_dbg_assert_(res == VK_SUCCESS);
 
 	vulkan->SetDebugName(img.image, VK_OBJECT_TYPE_IMAGE, tag);
+	// STV: ¿este render target quedo con compresion (AFBC)? Lo dice el driver
+	// (VK_EXT_image_compression_control): flags 0 = DEFAULT (comprimido si el
+	// driver pudo), 4 = DISABLED (sin comprimir). Solo imagenes grandes, 1 log c/u.
+	{	static bool diag = false; if (!diag) { diag = true; STV_LOG("STVAFBC diag: fn=%p ext=%d (imagen %dx%d)", (void *)vkGetImageSubresourceLayout2EXT, (int)vulkan->Extensions().EXT_image_compression_control, width, height); } }
+	if (res == VK_SUCCESS && vkGetImageSubresourceLayout2EXT && vulkan->Extensions().EXT_image_compression_control && width >= 256) {
+		static int nLog = 0;
+		if (nLog++ < 40) {
+			VkImageSubresource2EXT sub{ VK_STRUCTURE_TYPE_IMAGE_SUBRESOURCE_2_EXT };
+			sub.imageSubresource.aspectMask = color ? VK_IMAGE_ASPECT_COLOR_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
+			VkImageCompressionPropertiesEXT comp{ VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT };
+			VkSubresourceLayout2EXT lay{ VK_STRUCTURE_TYPE_SUBRESOURCE_LAYOUT_2_EXT, &comp };
+			vkGetImageSubresourceLayout2EXT(vulkan->GetDevice(), img.image, &sub, &lay);
+			STV_LOG("STVAFBC imagen %s %dx%d fmt=%d %s: compression=%u fixedRate=%u size=%llu", tag ? tag : "?", width, height, (int)format, color ? "color" : "depth", (unsigned)comp.imageCompressionFlags, (unsigned)comp.imageCompressionFixedRateFlags, (unsigned long long)lay.subresourceLayout.size);
+		}
+	}
 
 	VkImageAspectFlags aspects = color ? VK_IMAGE_ASPECT_COLOR_BIT : (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
 
