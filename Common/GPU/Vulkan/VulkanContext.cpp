@@ -842,6 +842,12 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 	allocatorInfo.physicalDevice = physical_devices_[physical_device_];
 	allocatorInfo.device = device_;
 	allocatorInfo.instance = instance_;
+	// STV_VMA_BLOQUES_v1: bloques de 16 MiB en vez del default (256 MiB, o
+	// heap/8 = 102 MB en este Mali; ver ext/vma/vk_mem_alloc.cpp). La holgura
+	// maxima por tipo de memoria pasa de ~100 MB a ~16 (VMA conserva a lo sumo
+	// UN bloque vacio por tipo y destruye el resto). Costo: mas
+	// vkAllocateMemory al crecer; en Mali es barato y se mide con el banco.
+	allocatorInfo.preferredLargeHeapBlockSize = 16ull * 1024 * 1024;
 	VkResult result = vmaCreateAllocator(&allocatorInfo, &allocator_);
 	_assert_(result == VK_SUCCESS);
 	_assert_(allocator_ != VK_NULL_HANDLE);

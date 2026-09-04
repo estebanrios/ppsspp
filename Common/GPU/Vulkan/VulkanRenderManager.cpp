@@ -10,6 +10,7 @@
 #include "Common/GPU/Vulkan/VulkanAlloc.h"
 #include "Common/GPU/Vulkan/VulkanContext.h"
 #include "Common/GPU/Vulkan/VulkanRenderManager.h"
+#include "ext/vma/vk_mem_alloc.h"  // STV_VMA_BLOQUES_v1: stats del asignador a logcat
 #ifdef __ANDROID__
 #include <sys/system_properties.h>
 #include <android/log.h>
@@ -706,6 +707,30 @@ void VulkanRenderManager::BeginFrame(bool enableProfiling, bool enableLogProfile
 	double frameBeginTime = time_now_d()
 	VLOG("BeginFrame");
 	VkDevice device = vulkan_->GetDevice();
+#ifdef __ANDROID__
+	{	// STV_VMA_BLOQUES_v1: estadisticas del asignador a logcat, cada N
+		// cuadros, por prop (debug.stv.vmalog=N; 0 o ausente = apagado). Es el
+		// instrumento para medir la holgura (blocks - alloc) sin el overlay, que
+		// solo se lee al crear el proceso.
+		static int stvVmaCadencia = 0;
+		char v[PROP_VALUE_MAX] = {0};
+		int n = (__system_property_get("debug.stv.vmalog", v) > 0) ? atoi(v) : 0;
+		if (n > 0 && ++stvVmaCadencia >= n) {
+			stvVmaCadencia = 0;
+			VmaTotalStatistics st;
+			vmaCalculateStatistics(vulkan_->Allocator(), &st);
+			VmaBudget budgets[VK_MAX_MEMORY_HEAPS];
+			vmaGetHeapBudgets(vulkan_->Allocator(), budgets);
+			uint64_t uso = 0;
+			for (uint32_t i = 0; i < vulkan_->GetMemoryProperties().memoryHeapCount; i++) uso += budgets[i].usage;
+			__android_log_print(ANDROID_LOG_INFO, "STV", "STVVMA alloc=%lluMB/%u bloques=%lluMB/%u holgura=%lluMB uso_heap=%lluMB",
+				(unsigned long long)(st.total.statistics.allocationBytes >> 20), st.total.statistics.allocationCount,
+				(unsigned long long)(st.total.statistics.blockBytes >> 20), st.total.statistics.blockCount,
+				(unsigned long long)((st.total.statistics.blockBytes - st.total.statistics.allocationBytes) >> 20),
+				(unsigned long long)(uso >> 20));
+		}
+	}
+#endif
 
 	int curFrame = vulkan_->GetCurFrame();
 	FrameData &frameData = frameData_[curFrame];

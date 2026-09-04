@@ -1,4 +1,13 @@
 #define VMA_IMPLEMENTATION
+// STV_VMA_BLOQUES_v1 (2026-09-04): VMA considera "chico" a todo heap de
+// hasta 1 GiB y en ese caso IGNORA preferredLargeHeapBlockSize y usa bloques
+// de heap/8: en el Mali-G57 del A523 (heap de 819 MB, memoria unificada =
+// RAM del sistema) eso son bloques de 102 MB que solo se devuelven cuando
+// quedan enteramente vacios. Medido en Ghost of Sparta: 49-77 MB en uso y
+// 128-144 MB reservados; el driver le cuenta al proceso 170-320 MB. Con el
+// umbral en 256 MB el heap pasa a "grande" y manda el tamano preferido que
+// fija VulkanContext.cpp (16 MiB).
+#define VMA_SMALL_HEAP_MAX_SIZE (256ULL * 1024 * 1024)
 
 #include "ppsspp_config.h"
 
