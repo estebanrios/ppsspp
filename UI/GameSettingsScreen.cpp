@@ -497,6 +497,12 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
 		g_Config.UpdateAfterSettingAutoFrameSkip();
 	});
 
+	// STV_FPSCAP_v1: techo de cuadros presentados. No toca la velocidad de
+	// emulacion: el juego sigue corriendo a tiempo real, solo se muestran menos
+	// cuadros. Sirve para cambiar un framerate variable por uno parejo.
+	PopupSliderChoice *stvFpsCap = graphicsSettings->Add(new PopupSliderChoice(&g_Config.iSTVFpsCap, 0, 60, 0, gr->T("Frame rate cap (STV)"), 5, screenManager(), gr->T("FPS")));
+	stvFpsCap->SetZeroLabel(gr->T("Off"));
+
 	PopupSliderChoice *altSpeed1 = graphicsSettings->Add(new PopupSliderChoice(&iAlternateSpeedPercent1_, 0, 1000, UI::NO_DEFAULT_INT, gr->T("Alternative Speed", "Alternative speed"), 5, screenManager(), gr->T("%, 0:unlimited")));
 	altSpeed1->SetFormat("%i%%");
 	altSpeed1->SetZeroLabel(gr->T("Unlimited"));

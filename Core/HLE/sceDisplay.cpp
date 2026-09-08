@@ -53,6 +53,7 @@
 #include "Core/HLE/sceKernelInterrupt.h"
 #ifdef __ANDROID__
 #include <sys/system_properties.h>
+#include <cstdlib>   // STV_FPSCAP_v1: atoi para leer la prop del techo
 #endif
 #include "Core/HW/Display.h"
 #include "Core/Util/PPGeDraw.h"
@@ -124,6 +125,11 @@ static double curFrameTime;
 static double lastFrameTime;
 static double nextFrameTime;
 static int numVBlanksSinceFlip;
+
+// STV_FPSCAP_v1: techo de cuadros PRESENTADOS (no de velocidad de emulacion).
+// credito = vblanks disponibles desde el ultimo cuadro presentado. Permite
+// techos no enteros (40 => 1,5 vblanks por cuadro, alternando 1 y 2).
+static double stvCapCredito;
 
 const int PSP_DISPLAY_MODE_LCD = 0;
 
@@ -644,6 +650,7 @@ void hleEnterVblank(u64 userdata, int cyclesLate) {
 	g_controlMapper.UpdateAutoMovements(CoreTiming::GetGlobalTimeUs() / 1000000.0);
 
 	numVBlanksSinceFlip++;
+	stvCapCredito += 1.0;   // STV_FPSCAP_v1: un vblank mas de credito
 
 	// TODO: Should this be done here or in hleLeaveVblank?
 	if (framebufIsLatched) {
@@ -680,6 +687,26 @@ void __DisplaySetDisplayLayoutConfig(const DisplayLayoutConfig &config) {
 	g_displayLayoutConfigCached = config;
 }
 
+// STV_FPSCAP_v1: techo efectivo de cuadros presentados. 0 = sin techo.
+// La prop debug.stv.capfps PISA al ajuste del ini, para poder conmutar en
+// caliente durante una prueba sin entrar al menu (mismo patron que debug.stv.ge).
+// Se relee cada 0,5 s, no en cada cuadro.
+static int StvFpsCap() {
+#ifdef __ANDROID__
+	static double ultimaLectura = -1.0;
+	static int propCache = 0;
+	const double ahora = time_now_d();
+	if (ultimaLectura < 0.0 || ahora - ultimaLectura > 0.5) {
+		ultimaLectura = ahora;
+		char v[PROP_VALUE_MAX] = {0};
+		propCache = (__system_property_get("debug.stv.capfps", v) > 0) ? atoi(v) : 0;
+	}
+	if (propCache > 0)
+		return propCache;
+#endif
+	return g_Config.iSTVFpsCap;
+}
+
 void __DisplayFlip(int cyclesLate) {
 	if (!gpu) {
 		_dbg_assert_(gpu);
@@ -714,6 +741,29 @@ void __DisplayFlip(int cyclesLate) {
 	Draw::DrawContext *draw = gpu->GetDrawContext();
 
 	bool needFlip = fbDirty || noRecentFlip || postEffectRequiresFlip;
+
+	// STV_FPSCAP_v1: si todavia no toca presentar, tratamos este vblank como
+	// "no hay cuadro nuevo". Ese camino (DoFrameIdleTiming) ya existe y sabe
+	// esperar sin desacomodar el tiempo del audio, asi que el techo se apoya en
+	// el en vez de inventar una espera propia.
+	// No pisamos noRecentFlip (1 flip cada 10 vblanks): es el que evita que la
+	// pantalla quede congelada, y a 20 fps o mas nunca llega a dispararse.
+	const int stvCap = StvFpsCap();
+	if (stvCap > 0 && needFlip && !noRecentFlip) {
+		const double necesarios = 60.0 / (double)stvCap;
+		// Techo al credito: si el juego venia presentando MENOS que el techo, no
+		// queremos que acumule permisos y despues suelte una rafaga sin limitar.
+		if (stvCapCredito > necesarios)
+			stvCapCredito = necesarios;
+		if (stvCapCredito < necesarios - 0.001) {
+			needFlip = false;
+		} else {
+			stvCapCredito -= necesarios;
+		}
+	} else if (stvCap <= 0) {
+		stvCapCredito = 0.0;
+	}
+
 	if (!needFlip) {
 		// Okay, there's no new frame to draw, game might be sitting in a static loading screen
 		// or similar, and not long enough to trigger noRecentFlip. But audio may be playing, so we need to time still.

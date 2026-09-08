@@ -310,6 +310,11 @@ public:
 	int iFrameSkip;
 	bool bAutoFrameSkip;
 
+	// STV_FPSCAP_v1: techo de cuadros PRESENTADOS (0 = sin techo). No cambia la
+	// velocidad de emulacion: retrasa al hilo que presenta, como ForceMax60FPS.
+	// Solo 60/30/20 son ritmos parejos en un panel de 60 Hz; el resto alterna.
+	int iSTVFpsCap;
+
 	int iWindowX;
 	int iWindowY;
 	int iWindowWidth;  // Windows and other windowed environments
