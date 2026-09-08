@@ -130,6 +130,12 @@ static int numVBlanksSinceFlip;
 // credito = vblanks disponibles desde el ultimo cuadro presentado. Permite
 // techos no enteros (40 => 1,5 vblanks por cuadro, alternando 1 y 2).
 static double stvCapCredito;
+// FramebufferDirty() CONSUME la bandera del vfb (la lee y la pone en false).
+// Si el techo bloquea el flip despues de consultarla, el cuadro que el juego
+// ya habia terminado se pierde como señal y hay que esperar a que dibuje otro:
+// medido, eso hundia un 20 % del tiempo a 20 fps con el techo en 30. Retenemos
+// el aviso hasta que efectivamente se presente.
+static bool stvCapCuadroRetenido;
 
 const int PSP_DISPLAY_MODE_LCD = 0;
 
@@ -736,7 +742,10 @@ void __DisplayFlip(int cyclesLate) {
 		// NOTICE_LOG(Log::System, "Throttle: %d %d", (int)fastForwardSkipFlip, (int)postEffectRequiresFlip);
 	}
 
-	const bool fbDirty = gpu->FramebufferDirty();
+	// STV_FPSCAP_v1: el || va DESPUES a proposito — FramebufferDirty() tiene que
+	// llamarse igual para consumir la bandera del vfb; lo que agregamos es el
+	// cuadro que el techo retuvo en un vblank anterior.
+	const bool fbDirty = gpu->FramebufferDirty() || stvCapCuadroRetenido;
 
 	Draw::DrawContext *draw = gpu->GetDrawContext();
 
@@ -757,11 +766,14 @@ void __DisplayFlip(int cyclesLate) {
 			stvCapCredito = necesarios;
 		if (stvCapCredito < necesarios - 0.001) {
 			needFlip = false;
+			stvCapCuadroRetenido = fbDirty;   // no perder el cuadro ya dibujado
 		} else {
 			stvCapCredito -= necesarios;
+			stvCapCuadroRetenido = false;
 		}
 	} else if (stvCap <= 0) {
 		stvCapCredito = 0.0;
+		stvCapCuadroRetenido = false;
 	}
 
 	if (!needFlip) {
