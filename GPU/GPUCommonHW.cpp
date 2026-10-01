@@ -997,79 +997,97 @@ struct StvProyector {
 	}
 };
 
-static int StvTramos(const StvProyector &pr, const StvV3 &a, const StvV3 &b, float L) {
-	const StvV3 &lo = StvMenor(a, b) ? a : b, &hi = StvMenor(a, b) ? b : a;
-	float x0, y0, x1, y1;
-	if (!pr.Pantalla(lo, &x0, &y0) || !pr.Pantalla(hi, &x1, &y1)) return 1;
-	float d = sqrtf((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
-	int n = (int)ceilf(d / L);
-	return n < 1 ? 1 : (n > 48 ? 48 : n);
-}
 // Punto k de n sobre la arista (a,b), calculado SIEMPRE desde el extremo menor: bit a bit igual
 // para los dos triangulos que comparten la arista, la recorran en el sentido que sea.
-static inline StvV3 StvPunto(const StvV3 &a, const StvV3 &b, int k, int n) {
-	if (k == 0) return a;
-	if (k == n) return b;
-	bool aMenor = StvMenor(a, b);
+// Llena 'out' con los n+1 puntos de a hacia b.
+static inline void StvCadena(const StvV3 &a, const StvV3 &b, int n, StvV3 *out) {
+	out[0] = a; out[n] = b;
+	if (n <= 1) return;
+	const bool aMenor = StvMenor(a, b);
 	const StvV3 &lo = aMenor ? a : b, &hi = aMenor ? b : a;
-	int kk = aMenor ? k : n - k;
-	float t = (float)kk / (float)n;
-	return StvV3{ lo.x + (hi.x - lo.x) * t, lo.y + (hi.y - lo.y) * t, lo.z + (hi.z - lo.z) * t };
+	const float dx = hi.x - lo.x, dy = hi.y - lo.y, dz = hi.z - lo.z;
+	const float inv = 1.0f / (float)n;
+	for (int k = 1; k < n; k++) {
+		const int kk = aMenor ? k : n - k;
+		const float t = (float)kk * inv;
+		out[k] = StvV3{ lo.x + dx * t, lo.y + dy * t, lo.z + dz * t };
+	}
 }
 
 static std::vector<StvV3> stvVolBuf;
 static size_t stvVolPos = 0;
 static uint64_t stvVolTriIn = 0, stvVolTriOut = 0;
+constexpr int kStvMaxTramos = 48;
 
-// Genera la lista de triangulos partida en stvVolBuf a partir de 'pos'. Devuelve el puntero y la
+// Genera la lista de triangulos partida en stvVolBuf a partir de 'in'. Devuelve el puntero y la
 // cantidad de vertices, o nullptr si no hay lugar (el llamador usa el original).
+// Costo: 3 proyecciones y 3 raices por triangulo de entrada; cada cadena se calcula una vez.
 static const StvV3 *StvPartirVolumen(const StvV3 *in, int nIn, float L, float escala, int *nOut, bool *hayQueVaciar) {
 	StvProyector pr; pr.Preparar(escala);
 	const size_t CAP = 1u << 19;  // 512 Ki vertices = 6 MB
 	if (stvVolBuf.size() < CAP) stvVolBuf.resize(CAP);
-	// Peor caso por triangulo: 3*48 triangulos. Si no entra, se pide vaciar y se vuelve al inicio.
-	size_t peor = (size_t)(nIn / 3) * 3 * 48 * 3;
+	// Peor caso por triangulo: 3*kStvMaxTramos triangulos.
+	const size_t peor = (size_t)(nIn / 3) * 3 * kStvMaxTramos * 3;
 	*hayQueVaciar = false;
 	if (peor > CAP) return nullptr;
 	if (stvVolPos + peor > CAP) { *hayQueVaciar = true; stvVolPos = 0; }
 	StvV3 *o = stvVolBuf.data() + stvVolPos;
 	StvV3 *ini = o;
-	auto emit = [&](const StvV3 &p, const StvV3 &q, const StvV3 &r) { *o++ = p; *o++ = q; *o++ = r; };
+	const float invL = 1.0f / L;
+	StvV3 c1[kStvMaxTramos + 1], c2[kStvMaxTramos + 1], c3[kStvMaxTramos + 1];
 	for (int t = 0; t + 2 < nIn; t += 3) {
-		const StvV3 v[3] = { in[t], in[t + 1], in[t + 2] };
+		const StvV3 v0 = in[t], v1 = in[t + 1], v2 = in[t + 2];
 		stvVolTriIn++;
-		if (StvIgual(v[0], v[1]) || StvIgual(v[1], v[2]) || StvIgual(v[2], v[0])) { emit(v[0], v[1], v[2]); continue; }
+		const StvV3 v[3] = { v0, v1, v2 };
+		float sx[3], sy[3];
+		bool ok[3];
+		for (int i = 0; i < 3; i++) ok[i] = pr.Pantalla(v[i], &sx[i], &sy[i]);
 		int n[3];
-		float len[3];
+		float d2[3];
 		for (int e = 0; e < 3; e++) {
-			const StvV3 &a = v[e], &b = v[(e + 1) % 3];
-			n[e] = StvTramos(pr, a, b, L);
-			float x0, y0, x1, y1;
-			len[e] = (pr.Pantalla(a, &x0, &y0) && pr.Pantalla(b, &x1, &y1)) ? (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) : 0.0f;
+			const int i = e, j = (e + 1) % 3;
+			if (ok[i] && ok[j]) {
+				// (x_j - x_i)^2 == (x_i - x_j)^2 al bit: el mismo n desde los dos triangulos.
+				const float dx = sx[j] - sx[i], dy = sy[j] - sy[i];
+				d2[e] = dx * dx + dy * dy;
+				int k = (int)ceilf(sqrtf(d2[e]) * invL);
+				n[e] = k < 1 ? 1 : (k > kStvMaxTramos ? kStvMaxTramos : k);
+			} else {
+				d2[e] = 0.0f;
+				n[e] = 1;
+			}
 		}
-		if (n[0] == 1 && n[1] == 1 && n[2] == 1) { emit(v[0], v[1], v[2]); continue; }
+		if ((n[0] | n[1] | n[2]) == 1 || StvIgual(v0, v1) || StvIgual(v1, v2) || StvIgual(v2, v0)) {
+			o[0] = v0; o[1] = v1; o[2] = v2; o += 3;
+			continue;
+		}
 		int ec = 0;  // arista mas corta
-		for (int e = 1; e < 3; e++) if (len[e] < len[ec]) ec = e;
+		if (d2[1] < d2[ec]) ec = 1;
+		if (d2[2] < d2[ec]) ec = 2;
 		if (n[ec] == 1) {
 			// Base (P,Q) sin partir, apice R: cierre entre las cadenas P->R y Q->R usando TODOS sus
 			// puntos (sin uniones en T) y el triangulo final contra el apice.
 			const StvV3 &P = v[ec], &Q = v[(ec + 1) % 3], &R = v[(ec + 2) % 3];
-			int n1 = n[(ec + 2) % 3];  // arista R->P (misma arista que P->R)
-			int n2 = n[(ec + 1) % 3];  // arista Q->R
+			const int n1 = n[(ec + 2) % 3];  // arista R-P
+			const int n2 = n[(ec + 1) % 3];  // arista Q-R
+			StvCadena(P, R, n1, c1);
+			StvCadena(Q, R, n2, c2);
 			int u = 0, w = 0;
 			while (u < n1 - 1 || w < n2 - 1) {
-				bool avanzaU = (w >= n2 - 1) || (u < n1 - 1 && (u + 1) * n2 <= (w + 1) * n1);
-				StvV3 cu = StvPunto(P, R, u, n1), cw = StvPunto(Q, R, w, n2);
-				if (avanzaU) { emit(cu, cw, StvPunto(P, R, u + 1, n1)); u++; }
-				else { emit(cu, cw, StvPunto(Q, R, w + 1, n2)); w++; }
+				const bool avanzaU = (w >= n2 - 1) || (u < n1 - 1 && (u + 1) * n2 <= (w + 1) * n1);
+				o[0] = c1[u]; o[1] = c2[w];
+				if (avanzaU) { o[2] = c1[u + 1]; u++; }
+				else { o[2] = c2[w + 1]; w++; }
+				o += 3;
 			}
-			emit(StvPunto(P, R, n1 - 1, n1), StvPunto(Q, R, n2 - 1, n2), R);
+			o[0] = c1[n1 - 1]; o[1] = c2[n2 - 1]; o[2] = R; o += 3;
 		} else {
 			// Las tres largas: abanico desde el centroide con cada arista partida.
-			StvV3 g{ (v[0].x + v[1].x + v[2].x) * (1.0f / 3.0f), (v[0].y + v[1].y + v[2].y) * (1.0f / 3.0f), (v[0].z + v[1].z + v[2].z) * (1.0f / 3.0f) };
+			const StvV3 g{ (v0.x + v1.x + v2.x) * (1.0f / 3.0f), (v0.y + v1.y + v2.y) * (1.0f / 3.0f), (v0.z + v1.z + v2.z) * (1.0f / 3.0f) };
+			StvV3 *cs[3] = { c1, c2, c3 };
+			for (int e = 0; e < 3; e++) StvCadena(v[e], v[(e + 1) % 3], n[e], cs[e]);
 			for (int e = 0; e < 3; e++) {
-				const StvV3 &a = v[e], &b = v[(e + 1) % 3];
-				for (int k = 0; k < n[e]; k++) emit(StvPunto(a, b, k, n[e]), StvPunto(a, b, k + 1, n[e]), g);
+				for (int k = 0; k < n[e]; k++) { o[0] = cs[e][k]; o[1] = cs[e][k + 1]; o[2] = g; o += 3; }
 			}
 		}
 	}
