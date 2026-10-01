@@ -324,6 +324,18 @@ void DrawEngineVulkan::ConvertStateToVulkanKey(FramebufferManagerVulkan &fbManag
 					gstate_c.Dirty(DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE);
 				}
 
+				// STV_VOLDIAG_v1 (arco Dante, DIAGNOSTICO, rompe las sombras): sobre los volumenes (stencil,
+				// sin color ni depth write) 1 = sin test de depth, 2 = ops KEEP (sin actualizar),
+				// 3 = sin test de stencil, 4 = sin cull.
+				{
+					static int stvVd = -1;
+					if (stvVd < 0) stvVd = StvPropInt("debug.stv.voldiag");
+					if (stvVd > 0 && !key.depthWriteEnable && key.colorWriteMask == 0) {
+						if (stvVd == 1) { key.depthTestEnable = false; key.depthCompareOp = VK_COMPARE_OP_ALWAYS; }
+						if (stvVd == 2) { key.stencilPassOp = VK_STENCIL_OP_KEEP; key.stencilFailOp = VK_STENCIL_OP_KEEP; key.stencilDepthFailOp = VK_STENCIL_OP_KEEP; }
+						if (stvVd == 3) { key.stencilTestEnable = false; }
+					}
+				}
 				// STV_ZPASS_v1 (arco Dante, EXPERIMENTO de medicion, debug.stv.zpass=1): sombras por
 				// volumen z-fail (incr/decr en depth-fail, keep en pass, sin color ni depth write)
 				// pasadas a z-pass (el op inverso en depth-pass, keep en fail). Para un volumen cerrado
