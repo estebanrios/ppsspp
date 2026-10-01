@@ -38,6 +38,8 @@
 #include "GPU/Common/ShaderUniforms.h"
 #include "GPU/Vulkan/DrawEngineVulkan.h"
 #include "Common/StvProp.h"
+#include "Common/File/FileUtil.h"  // STV_VOLDUMP_v1
+#include "Core/Config.h"
 #include <cstring>
 #include "Common/TimeUtil.h"
 #include <cmath>
@@ -393,6 +395,41 @@ void DrawEngineVulkan::Flush() {
 	// The optimization to avoid indexing isn't really worth it on Vulkan since it means creating more pipelines.
 	// This could be avoided with the new dynamic state extensions, but not available enough on mobile.
 	const bool forceIndexed = draw_->GetDeviceCaps().verySlowShaderCompiler;
+
+	// STV_VOLDUMP_v1 (arco Dante, instrumento): `setprop debug.stv.voldump N` (N nuevo) guarda los
+	// draws de volumen de sombra del lote (stencil, color enmascarado, sin depth write) tal como
+	// llegan del juego: cabecera (vtype, prim, cull, n de draws) + por draw (vertexCount, indexType)
+	// + los bytes crudos de sus vertices. En <memstick>/stv_vol_N.bin. Para estudiar su geometria.
+	{
+		static int ultimoVd = 0;
+		char v[PROP_VALUE_MAX] = {0};
+		int n = (__system_property_get("debug.stv.voldump", v) > 0) ? atoi(v) : 0;
+		if (n != 0 && n != ultimoVd && gstate.isStencilTestEnabled() && !gstate.isModeClear() &&
+			(gstate.getColorMask() & 0xFFFFFF) == 0xFFFFFF && !gstate.isDepthWriteEnabled() && numDrawVerts_ > 0) {
+			ultimoVd = n;
+			char nombre[64]; snprintf(nombre, sizeof(nombre), "stv_vol_%d.bin", n);
+			Path ruta = g_Config.memStickDirectory / nombre;
+			FILE *f = File::OpenCFile(ruta, "wb");
+			if (f) {
+				uint32_t cab[8] = { 0x4C4F5653u, lastVType_, (uint32_t)prevPrim_, (uint32_t)gstate.isCullEnabled(), (uint32_t)gstate.getCullMode(), (uint32_t)numDrawVerts_, (uint32_t)numDrawInds_, (uint32_t)dec_->VertexSize() };
+				fwrite(cab, sizeof(cab), 1, f);
+				for (int i = 0; i < numDrawVerts_; i++) {
+					uint32_t d2[4] = { (uint32_t)drawVerts_[i].vertexCount, drawVerts_[i].indexLowerBound, drawVerts_[i].indexUpperBound, 0 };
+					fwrite(d2, sizeof(d2), 1, f);
+					fwrite(drawVerts_[i].verts, dec_->VertexSize(), drawVerts_[i].indexUpperBound + 1, f);
+				}
+				for (int i = 0; i < numDrawInds_; i++) {
+					uint32_t d3[4] = { (uint32_t)drawInds_[i].vertexCount, (uint32_t)drawInds_[i].indexType, (uint32_t)drawInds_[i].prim, (uint32_t)drawInds_[i].clockwise };
+					fwrite(d3, sizeof(d3), 1, f);
+					if (drawInds_[i].inds && drawInds_[i].indexType) fwrite(drawInds_[i].inds, drawInds_[i].indexType == 1 ? 1 : (drawInds_[i].indexType == 2 ? 2 : 4), drawInds_[i].vertexCount, f);
+				}
+				fclose(f);
+				STV_LOG("STVVOLDUMP: %s vtype=%08x prim=%d draws=%d/%d", ruta.c_str(), lastVType_, (int)prevPrim_, numDrawVerts_, numDrawInds_);
+			} else {
+				STV_LOG("STVVOLDUMP: NO pude abrir %s", ruta.c_str());
+			}
+		}
+	}
 
 	if (useHWTransform) {
 		uint32_t vbOffset;
