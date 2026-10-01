@@ -574,7 +574,17 @@ void CederEnComando() {
 	// SOLO por EnqueueList. Cualquier otro que espere el candado grueso puede
 	// tocar estado de GPU, y dejarlo entrar a mitad de lista es justo el ciclo
 	// que colgo la consola en los intentos anteriores del candado fino.
-	if (g_esperandoEncola.load(std::memory_order_relaxed) == 0) {
+	static int cederStall = -1;
+	if (cederStall < 0) {
+#if defined(__ANDROID__)
+		char prop[PROP_VALUE_MAX] = { 0 };
+		cederStall = (__system_property_get("debug.stv.ceder.stall", prop) > 0 && prop[0]) ? (prop[0] != '0') : 1;
+#else
+		cederStall = 1;
+#endif
+	}
+	if (g_esperandoEncola.load(std::memory_order_relaxed) == 0 &&
+		(cederStall == 0 || g_esperandoStall.load(std::memory_order_relaxed) == 0)) {
 		g_ccNadieEspera.fetch_add(1, std::memory_order_relaxed);
 		return;
 	}

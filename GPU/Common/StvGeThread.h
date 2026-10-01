@@ -464,6 +464,14 @@ void CederEnFronteraDeLista();
 // Por eso se exige que el que espera sea EnqueueList y no cualquiera: es el
 // unico camino auditado que no toca estado de GPU. Valvula debug.stv.ceder.cmd.
 inline std::atomic<int> g_esperandoEncola{0};
+// STV_CEDER_STALL_v1 (arco Dante, 2026-10-01): UpdateStall tambien. Dante's Inferno arma la lista de
+// a pedazos y llama sceGeListUpdateStallAddr ~270 veces por cuadro; cada una esperaba la pasada
+// ENTERA del worker (cand_stall = 12,5 ms por cuadro de 31). UpdateStall solo escribe dl.stall y
+// lee dl.state: no toca estado de GPU, igual que EnqueueList. Con el worker parado en una frontera
+// de comando, el FastRunLoop en curso termina en el limite viejo y el lazo externo sigue con el
+// nuevo: es lo que hace el GE de verdad (mover el limite es asincronico). Valvula
+// debug.stv.ceder.stall (defecto 1).
+inline std::atomic<int> g_esperandoStall{0};
 // Contador de comandos del worker, para la cadencia. No hace falta atomico: lo
 // toca solo el worker.
 inline unsigned g_comandosDesdeCesion = 0;

@@ -542,7 +542,9 @@ u32 GPUCommon::DequeueList(int listid) {
 }
 
 u32 GPUCommon::UpdateStall(int listid, u32 newstall, bool *runList) {
+	stvge::g_esperandoStall.fetch_add(1, std::memory_order_relaxed);   // STV_CEDER_STALL_v1
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_STALL);  // STV_GE_THREAD_v1: dl.stall es el downcount vivo de la pasada
+	stvge::g_esperandoStall.fetch_sub(1, std::memory_order_relaxed);
 	stvge::CandadoDL zonaDL("UpdateStall");   // contabilidad de listas
 	*runList = false;
 	if (listid < 0 || listid >= DisplayListMaxCount || dls[listid].state == PSP_GE_DL_STATE_NONE)
