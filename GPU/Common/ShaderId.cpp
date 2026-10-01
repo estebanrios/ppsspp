@@ -5,6 +5,7 @@
 #include "Common/GPU/thin3d.h"
 #include "Common/StringUtils.h"
 #include "Core/Config.h"
+#include "Common/StvProp.h"
 
 #include "GPU/ge_constants.h"
 #include "GPU/GPU.h"
@@ -466,6 +467,26 @@ void ComputeFragmentShaderID(FShaderID *id_out, const ComputedPipelineState &pip
 			if (gstate_c.Use(GPU_USE_FRAMEBUFFER_FETCH)) {
 				id.SetBit(FS_BIT_USE_FRAMEBUFFER_FETCH);
 			}
+		}
+
+		// STV_VOLFS_v1 (arco Dante, experimento): un draw que no escribe NINGUN canal de color y
+		// cuyo shader no puede descartar (sin alpha/color test, sin workaround de stencil, sin
+		// depth en el shader) solo vale por su depth/stencil: el shader de fragmentos no aporta
+		// nada. Se le da el shader minimo (mismo flat) para que el driver pueda saltearlo.
+		// debug.stv.volfs=1. Las sombras por volumen de Dante's Inferno son ~24 draws asi.
+		static int stvVolFs = -1;
+		if (stvVolFs < 0) { stvVolFs = StvPropInt("debug.stv.volfs"); }
+		if (stvVolFs > 0 && pipelineState.maskState.channelMask == 0 && !pipelineState.maskState.applyFramebufferRead &&
+			!enableAlphaTest && !enableColorTest && !id.Bit(FS_BIT_NO_DEPTH_CANNOT_DISCARD_STENCIL) &&
+			!id.Bit(FS_BIT_DEPTH_TEST_NEVER) && !gstate_c.Use(GPU_ROUND_FRAGMENT_DEPTH_TO_16BIT) &&
+			!FragmentIdNeedsFramebufferRead(id)) {
+			bool flat = id.Bit(FS_BIT_FLATSHADE);
+			bool arr = id.Bit(FS_BIT_SAMPLE_ARRAY_TEXTURE);
+			bool st = id.Bit(FS_BIT_STEREO);
+			id = FShaderID();
+			id.SetBit(FS_BIT_FLATSHADE, flat);
+			id.SetBit(FS_BIT_SAMPLE_ARRAY_TEXTURE, arr);
+			id.SetBit(FS_BIT_STEREO, st);
 		}
 	}
 
