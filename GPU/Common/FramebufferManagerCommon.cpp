@@ -1493,6 +1493,25 @@ void FramebufferManagerCommon::CopyFramebufferForColorTexture(VirtualFramebuffer
 		gstate_c.Dirty(DIRTY_TEXTURE_PARAMS);
 	}
 
+	// STV_SELFCOPY_v1 (instrumento, arco Dante): por que la copia de autotextura no se recorta.
+	// debug.stv.selfcopy=1 -> las primeras 64 copias y despues 1 de cada 400, a logcat (tag STV).
+	{
+		static int stvSc = -1;
+		static int stvScN = 0;
+		if (stvSc < 0) stvSc = StvPropInt("debug.stv.selfcopy");
+		if (stvSc > 0) {
+			stvScN++;
+			if (stvScN <= 64 || (stvScN % 400) == 0) {
+				STV_LOG("STVSELFCOPY n=%d fb=%08x tex=%08x thr=%d flags=%d vb=U%d..%d V%d..%d off=%.0f,%.0f drawn=%dx%d tw=%dx%d sc=%d,%d-%d,%d -> %d,%d %dx%d",
+					stvScN, src->fb_address, gstate.getTextureAddress(0), gstate.isModeThrough() ? 1 : 0, flags,
+					gstate_c.vertBounds.minU, gstate_c.vertBounds.maxU, gstate_c.vertBounds.minV, gstate_c.vertBounds.maxV,
+					(float)gstate_c.curTextureXOffset, (float)gstate_c.curTextureYOffset, src->drawnWidth, src->drawnHeight,
+					gstate.getTextureWidth(0), gstate.getTextureHeight(0),
+					gstate.getScissorX1(), gstate.getScissorY1(), gstate.getScissorX2(), gstate.getScissorY2(), x, y, w, h);
+			}
+		}
+	}
+
 	if (x < src->drawnWidth && y < src->drawnHeight && w > 0 && h > 0) {
 		if (x != 0 || y != 0 || w < src->drawnWidth || h < src->drawnHeight) {
 			*partial = true;
