@@ -834,7 +834,11 @@ void VulkanRenderManager::BeginFrame(bool enableProfiling, bool enableLogProfile
 				{	// STV: volcado del perfil por pase a logcat, 1 de cada 60 cuadros, por prop.
 					static int stvCadencia = 0;
 					char v[PROP_VALUE_MAX] = {0};
-					if (__system_property_get("debug.stv.gpuprof", v) > 0 && v[0] == '1' && ++stvCadencia >= 60) {
+					// STV_GEDUMP_v1: debug.stv.gpuprof.cada = cada cuantos cuadros (defecto 60; el banco de
+					// volcado usa 5 para tener cientos de muestras del MISMO cuadro).
+					static int stvCada = -1;
+					if (stvCada < 0) { char c[PROP_VALUE_MAX] = {0}; stvCada = (__system_property_get("debug.stv.gpuprof.cada", c) > 0 && atoi(c) > 0) ? atoi(c) : 60; }
+					if (__system_property_get("debug.stv.gpuprof", v) > 0 && v[0] == '1' && ++stvCadencia >= stvCada) {
 						stvCadencia = 0;
 						__android_log_print(ANDROID_LOG_INFO, "STV", "STVGPUPROF INICIO cuadro=%llu", (unsigned long long)frameId);
 						std::string resumen = frameData.profile.profileSummary;
