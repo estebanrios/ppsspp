@@ -401,10 +401,17 @@ void DrawEngineVulkan::Flush() {
 	// <memstick>/stv_vol_N.bin, uno tras otro: cabecera (vtype, prim, cull, draws, tamaño de
 	// vertice), matrices world/view/proj, viewport y offset, y los vertices crudos (+ indices).
 	{
-		static int ultimoVd = 0, quedan = 0;
+		static int ultimoVd = 0, quedan = 0, nProp = 0;
+		static double tProp = 0.0;
 		static FILE *fv = nullptr;
-		char v[PROP_VALUE_MAX] = {0};
-		int n = (__system_property_get("debug.stv.voldump", v) > 0) ? atoi(v) : 0;
+		// La prop se lee como mucho cada 0,25 s: Flush corre cientos de veces por cuadro.
+		double ahora = time_now_d();
+		if (ahora - tProp > 0.25) {
+			tProp = ahora;
+			char v[PROP_VALUE_MAX] = {0};
+			nProp = (__system_property_get("debug.stv.voldump", v) > 0) ? atoi(v) : 0;
+		}
+		int n = nProp;
 		if (n != 0 && n != ultimoVd) {
 			ultimoVd = n; quedan = 48;
 			if (fv) fclose(fv);
