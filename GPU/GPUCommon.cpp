@@ -240,6 +240,7 @@ u32 GPUCommon::DrawSync(int mode) {
 	if (!top || top->state == PSP_GE_DL_STATE_COMPLETED)
 		return PSP_GE_LIST_COMPLETED;
 
+	stvge::AplicarStallPendiente(currentList->id, &currentList->stall);   // STV_STALL_LIBRE_v1
 	if (currentList->pc == currentList->stall)
 		return PSP_GE_LIST_STALLING;
 
@@ -280,6 +281,7 @@ int GPUCommon::ListSync(int listid, int mode) {
 			return PSP_GE_LIST_QUEUED;
 
 		case PSP_GE_DL_STATE_RUNNING:
+			stvge::AplicarStallPendiente(listid, &dl.stall);   // STV_STALL_LIBRE_v1
 			if (dl.pc == dl.stall)
 				return PSP_GE_LIST_STALLING;
 			return PSP_GE_LIST_DRAWING;
@@ -471,6 +473,10 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 	dl.startpc = listpc & 0x0FFFFFFF;
 	dl.pc = listpc & 0x0FFFFFFF;
 	dl.stall = stall & 0x0FFFFFFF;
+	if (id < stvge::kStvMaxListas) {   // STV_STALL_LIBRE_v1: lista nueva en el slot -> pendientes viejos invalidos
+		stvge::g_stallGen[id].fetch_add(1, std::memory_order_relaxed);
+		stvge::g_stallPend[id].store(0, std::memory_order_relaxed);
+	}
 	dl.subIntrBase = std::max(subIntrBase, -1);
 	dl.stackptr = 0;
 	dl.signal = PSP_GE_SIGNAL_NONE;
@@ -542,6 +548,20 @@ u32 GPUCommon::DequeueList(int listid) {
 }
 
 u32 GPUCommon::UpdateStall(int listid, u32 newstall, bool *runList) {
+	// STV_STALL_LIBRE_v1: ver StvGeThread.h. Sin candado: el worker aplica el limite nuevo.
+	if (stvge::StallLibreActivo() && listid >= 0 && listid < DisplayListMaxCount && listid < stvge::kStvMaxListas) {
+		*runList = false;
+		const DisplayListState st = dls[listid].state;   // lectura sin candado: solo para el codigo de error
+		if (st == PSP_GE_DL_STATE_NONE)
+			return SCE_KERNEL_ERROR_INVALID_ID;
+		if (st == PSP_GE_DL_STATE_COMPLETED)
+			return SCE_KERNEL_ERROR_ALREADY;
+		const uint32_t gen = stvge::g_stallGen[listid].load(std::memory_order_relaxed) & 0x7FFFFFFFu;
+		stvge::g_stallPend[listid].store((1ull << 63) | ((uint64_t)gen << 32) | (uint64_t)(newstall & 0x0FFFFFFF), std::memory_order_release);
+		stvge::g_stallLibres.fetch_add(1, std::memory_order_relaxed);
+		*runList = true;
+		return 0;
+	}
 	stvge::g_esperandoStall.fetch_add(1, std::memory_order_relaxed);   // STV_CEDER_STALL_v1
 	stvge::CandadoGe candadoGe(stvmed::R_CAND_STALL);  // STV_GE_THREAD_v1: dl.stall es el downcount vivo de la pasada
 	stvge::g_esperandoStall.fetch_sub(1, std::memory_order_relaxed);
@@ -864,6 +884,7 @@ DLResult GPUCommon::ProcessDLQueue() {
 
 			cycleLastPC = list.pc;
 			cyclesExecuted += 60;
+			stvge::AplicarStallPendiente(list.id, &list.stall);   // STV_STALL_LIBRE_v1
 			downcount = list.stall == 0 ? 0x0FFFFFFF : (list.stall - list.pc) / 4;
 			{
 				stvge::CandadoDL zona("ProcessDLQueue::arranque");
@@ -880,6 +901,7 @@ DLResult GPUCommon::ProcessDLQueue() {
 			resumingFromDebugBreak_ = false;
 			// The bottom part of the gpuState loop below, that wasn't executed
 			// when we bailed.
+			stvge::AplicarStallPendiente(list.id, &list.stall);   // STV_STALL_LIBRE_v1
 			downcount = list.stall == 0 ? 0x0FFFFFFF : (list.stall - list.pc) / 4;
 			if (gpuState == GPUSTATE_STALL && list.pc != list.stall) {
 				// Unstalled (Can this happen?)
@@ -891,6 +913,7 @@ DLResult GPUCommon::ProcessDLQueue() {
 		const bool useFastRunLoop = useFastRunLoop_;
 
 		while (gpuState == GPUSTATE_RUNNING) {
+			stvge::AplicarStallPendiente(list.id, &list.stall);   // STV_STALL_LIBRE_v1
 			if (list.pc == list.stall) {
 				gpuState = GPUSTATE_STALL;
 				downcount = 0;
@@ -912,6 +935,7 @@ DLResult GPUCommon::ProcessDLQueue() {
 				}
 			}
 
+			stvge::AplicarStallPendiente(list.id, &list.stall);   // STV_STALL_LIBRE_v1
 			downcount = list.stall == 0 ? 0x0FFFFFFF : (list.stall - list.pc) / 4;
 			if (gpuState == GPUSTATE_STALL && list.pc != list.stall) {
 				// Unstalled (Can this happen?)

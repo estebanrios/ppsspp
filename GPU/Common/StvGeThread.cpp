@@ -558,6 +558,19 @@ static int ResolverCederCmd() {
 	return 1;
 }
 
+bool StallLibreActivo() {
+	static int v = -1;
+	if (v < 0) {
+#if defined(__ANDROID__)
+		char prop[PROP_VALUE_MAX] = { 0 };
+		v = (__system_property_get("debug.stv.stall.libre", prop) > 0 && prop[0]) ? (prop[0] != '0') : 1;
+#else
+		v = 1;
+#endif
+	}
+	return v != 0 && NivelActivo() != 0;
+}
+
 void CederEnComando() {
 	if (g_cederCmd == 0 || !g_lockPasada)
 		return;
@@ -954,7 +967,8 @@ void PorVblank() {
 			const char *sChoque = g_choqueSitio.load(std::memory_order_relaxed);
 			const char *sDuenio = g_choqueDueñoSitio.load(std::memory_order_relaxed);
 			snprintf(b, sizeof(b),
-				"STV: dl ciclos=%llu intrEnd=%llu compl=%llu pop=%llu conGpu=%llu fino=%d limpDif=%llu limpDir=%llu cesCmd=%llu/miro=%llu/noW=%llu/anid=%llu/nadie=%llu entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
+				"STV: dl stallLibre=%llu/aplic=%llu ciclos=%llu intrEnd=%llu compl=%llu pop=%llu conGpu=%llu fino=%d limpDif=%llu limpDir=%llu cesCmd=%llu/miro=%llu/noW=%llu/anid=%llu/nadie=%llu entradas=%llu COLISIONES=%llu pico=%d dentro=%d ultima: tid=%d en %s CHOCO contra %s",
+				(unsigned long long)g_stallLibres.load(std::memory_order_relaxed), (unsigned long long)g_stallAplicados.load(std::memory_order_relaxed),
 				(unsigned long long)g_ciclos.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndTotal.load(std::memory_order_relaxed),
 				(unsigned long long)g_intrEndCompletada.load(std::memory_order_relaxed),

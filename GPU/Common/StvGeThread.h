@@ -472,6 +472,32 @@ inline std::atomic<int> g_esperandoEncola{0};
 // nuevo: es lo que hace el GE de verdad (mover el limite es asincronico). Valvula
 // debug.stv.ceder.stall (defecto 1).
 inline std::atomic<int> g_esperandoStall{0};
+
+// STV_STALL_LIBRE_v1 (arco Dante, 2026-10-01): con el worker activo, UpdateStall NO toma el
+// candado grueso. Medido: ceder en frontera de comando no alcanzaba (las pasadas ya son cortas, ~80
+// us, porque el juego mueve el limite ~270 veces por cuadro): el EmuThread y el worker se ALTERNABAN
+// (EmuThread esperando 12,5 ms por cuadro, worker esperando ordenes 15,6). El limite nuevo se deja
+// en un atomico por lista {valido, generacion, stall} y lo aplica quien tenga el candado: el
+// worker en cada punto donde InterpretList lee list.stall, o ListSync/DrawSync al consultar. La
+// orden RUN que despacha sceGeListUpdateStallAddr despues garantiza que se aplique. La generacion
+// (sube en EnqueueList) impide que un pendiente viejo caiga sobre una lista reusada.
+// DisplayList NO se toca: se serializa tal cual en los savestates. Valvula debug.stv.stall.libre.
+constexpr int kStvMaxListas = 64;
+inline std::atomic<uint64_t> g_stallPend[kStvMaxListas];
+inline std::atomic<uint32_t> g_stallGen[kStvMaxListas];
+inline std::atomic<uint64_t> g_stallLibres{0}, g_stallAplicados{0};
+bool StallLibreActivo();
+// Devuelve true si habia un pendiente valido y lo aplico en *stall.
+inline bool AplicarStallPendiente(int id, uint32_t *stall) {
+	if (id < 0 || id >= kStvMaxListas) return false;
+	uint64_t v = g_stallPend[id].exchange(0, std::memory_order_acq_rel);
+	if (!(v >> 63)) return false;
+	uint32_t gen = (uint32_t)(v >> 32) & 0x7FFFFFFFu;
+	if (gen != (g_stallGen[id].load(std::memory_order_relaxed) & 0x7FFFFFFFu)) return false;
+	*stall = (uint32_t)v;
+	g_stallAplicados.fetch_add(1, std::memory_order_relaxed);
+	return true;
+}
 // Contador de comandos del worker, para la cadencia. No hace falta atomico: lo
 // toca solo el worker.
 inline unsigned g_comandosDesdeCesion = 0;
