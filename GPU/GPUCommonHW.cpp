@@ -958,7 +958,7 @@ void GPUCommonHW::Execute_VertexTypeSkinning(u32 op, u32 diff) {
 // dos triangulos que la comparten generan vertices identicos bit a bit: la malla sigue cerrada,
 // sin uniones en T, con la misma orientacion y la misma area. El stencil resultante es el mismo.
 // Solo para draws que no escriben color ni depth, con stencil, triangulos, posicion float sin
-// indices (la forma de los volumenes). debug.stv.volsplit = L en px de render (0 apaga).
+// indices (la forma de los volumenes). debug.stv.volsplit = L en px de render (defecto 192, 0 apaga).
 // ============================================================================
 namespace {
 struct StvV3 { float x, y, z; };
@@ -1236,7 +1236,7 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 		gstate.isStencilTestEnabled() && !gstate.isModeClear() && !gstate.isDepthWriteEnabled() &&
 		(gstate.getColorMask() & 0xFFFFFF) == 0xFFFFFF) {
 		static int stvL = -1;
-		if (stvL < 0) stvL = StvPropDef("debug.stv.volsplit", 0);
+		if (stvL < 0) stvL = StvPropDef("debug.stv.volsplit", 192);  // 192 px de render: optimo del barrido 128-768 (arco Dante)
 		if (stvL > 0) {
 			float esc = vfb ? vfb->renderScaleFactor : 1.0f;
 			int nNuevo = 0; bool vaciar = false;
