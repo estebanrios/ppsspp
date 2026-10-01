@@ -228,6 +228,14 @@ void DrawEngineVulkan::ConvertStateToVulkanKey(FramebufferManagerVulkan &fbManag
 				// TODO: Still has a bug where we clamp to depth range if one is not the full range.
 				// But the alternate is not clamping in either direction...
 				key.depthClampEnable = gstate.isDepthClampEnabled() && gstate_c.Use(GPU_USE_DEPTH_CLAMP);
+				// STV_DCLAMP_v1 (arco Dante, DIAGNOSTICO): debug.stv.dclamp=1 apaga el depth clamp en los
+				// draws que no escriben color ni depth (las sombras por volumen); =2 en todos.
+				{
+					static int stvDc = -1;
+					if (stvDc < 0) stvDc = StvPropInt("debug.stv.dclamp");
+					if (stvDc >= 2 || (stvDc == 1 && (gstate.getColorMask() & 0xFFFFFF) == 0xFFFFFF && !gstate.isDepthWriteEnabled()))
+						key.depthClampEnable = false;
+				}
 			} else {
 				// We just want to clip in this case, the clamp would be clipped anyway.
 				key.depthClampEnable = false;

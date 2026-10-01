@@ -273,8 +273,8 @@ static bool StvClasif(int verts, const VulkanPipelineRasterStateKey &k, int prim
 		if (nuevo && nVol < 40) {
 			if (nVistos < 64) vistos[nVistos++] = h;
 			nVol++;
-			STV_LOG("STVVOLUMEN prim=%d verts=%d thr=%d pmsk=%08x vkmask=%x blend=%d cullEn=%d cull=%d vkcull=%d ztest=%d zfunc=%d vkz=%d zw=%d stfunc=%d ref=%02x msk=%02x ops(sf,zf,zp)=%d,%d,%d vkops=%d,%d,%d wmask=%02x fs=[%s]",
-				prim, verts, gstate.isModeThrough() ? 1 : 0, gstate.getColorMask(), k.colorWriteMask, k.blendEnable,
+			STV_LOG("STVVOLUMEN dclamp=%d prim=%d verts=%d thr=%d pmsk=%08x vkmask=%x blend=%d cullEn=%d cull=%d vkcull=%d ztest=%d zfunc=%d vkz=%d zw=%d stfunc=%d ref=%02x msk=%02x ops(sf,zf,zp)=%d,%d,%d vkops=%d,%d,%d wmask=%02x fs=[%s]",
+				(int)k.depthClampEnable, prim, verts, gstate.isModeThrough() ? 1 : 0, gstate.getColorMask(), k.colorWriteMask, k.blendEnable,
 				gstate.isCullEnabled() ? 1 : 0, (int)gstate.getCullMode(), k.cullMode,
 				gstate.isDepthTestEnabled() ? 1 : 0, (int)gstate.getDepthTestFunction(), k.depthCompareOp, gstate.isDepthWriteEnabled() ? 1 : 0,
 				(int)gstate.getStencilTestFunction(), gstate.getStencilTestRef(), gstate.getStencilTestMask(),
