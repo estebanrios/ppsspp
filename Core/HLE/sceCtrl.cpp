@@ -42,6 +42,7 @@
 #include "Core/MemMapHelpers.h"
 #include "Core/MIPS/MIPS.h"
 #include "Core/Replay.h"
+#include "Core/Config.h"
 #include "Core/Util/AudioFormat.h"  // for clamp_u8
 
 /* Index for the two analog directions */
@@ -228,7 +229,13 @@ static void StvReplayPoll() {
 	// shell: /data/local/tmp es shell:shell 771 y PPSSPP corre como u0_aNN, o
 	// sea que ahi NO puede crear archivos (error cometido y medido: el guardado
 	// fallaba en silencio). El directorio de datos del propio juego si lo es.
-	const Path ruta("/sdcard/Android/data/org.ppsspp.ppsspp/files/stv_replay.bin");
+	// STV_REPLAY_RUTA_v1 (2026-09-30): la jugada vive en el MEMSTICK del propio paquete.
+	// Antes la ruta estaba fija a la carpeta del PPSSPP OFICIAL
+	// (/sdcard/Android/data/org.ppsspp.ppsspp/files): con el paquete org.ppsspp.ppsspp.stv
+	// Android no deja leer la carpeta de otra app ("STVREPLAY: NO se pudo cargar"), y con
+	// el memstick en la tarjeta de ROMs (modo eMMC) tampoco era su carpeta. El memstick
+	// lo publica el guardian en memstick_dir.txt; el banco escribe la jugada ahi.
+	const Path ruta = g_Config.memStickDirectory / "stv_replay.bin";
 	if (!strcmp(v, "grabar")) {
 		ReplayAbort();
 		ReplayBeginSave();
