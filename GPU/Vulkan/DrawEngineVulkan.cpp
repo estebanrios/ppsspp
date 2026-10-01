@@ -397,37 +397,41 @@ void DrawEngineVulkan::Flush() {
 	const bool forceIndexed = draw_->GetDeviceCaps().verySlowShaderCompiler;
 
 	// STV_VOLDUMP_v1 (arco Dante, instrumento): `setprop debug.stv.voldump N` (N nuevo) guarda los
-	// draws de volumen de sombra del lote (stencil, color enmascarado, sin depth write) tal como
-	// llegan del juego: cabecera (vtype, prim, cull, n de draws) + por draw (vertexCount, indexType)
-	// + los bytes crudos de sus vertices. En <memstick>/stv_vol_N.bin. Para estudiar su geometria.
+	// proximos 48 lotes de volumen de sombra (stencil, color enmascarado, sin depth write) en
+	// <memstick>/stv_vol_N.bin, uno tras otro: cabecera (vtype, prim, cull, draws, tamaño de
+	// vertice), matrices world/view/proj, viewport y offset, y los vertices crudos (+ indices).
 	{
-		static int ultimoVd = 0;
+		static int ultimoVd = 0, quedan = 0;
+		static FILE *fv = nullptr;
 		char v[PROP_VALUE_MAX] = {0};
 		int n = (__system_property_get("debug.stv.voldump", v) > 0) ? atoi(v) : 0;
-		if (n != 0 && n != ultimoVd && gstate.isStencilTestEnabled() && !gstate.isModeClear() &&
-			(gstate.getColorMask() & 0xFFFFFF) == 0xFFFFFF && !gstate.isDepthWriteEnabled() && numDrawVerts_ > 0) {
-			ultimoVd = n;
+		if (n != 0 && n != ultimoVd) {
+			ultimoVd = n; quedan = 48;
+			if (fv) fclose(fv);
 			char nombre[64]; snprintf(nombre, sizeof(nombre), "stv_vol_%d.bin", n);
-			Path ruta = g_Config.memStickDirectory / nombre;
-			FILE *f = File::OpenCFile(ruta, "wb");
-			if (f) {
-				uint32_t cab[8] = { 0x4C4F5653u, lastVType_, (uint32_t)prevPrim_, (uint32_t)gstate.isCullEnabled(), (uint32_t)gstate.getCullMode(), (uint32_t)numDrawVerts_, (uint32_t)numDrawInds_, (uint32_t)dec_->VertexSize() };
-				fwrite(cab, sizeof(cab), 1, f);
-				for (int i = 0; i < numDrawVerts_; i++) {
-					uint32_t d2[4] = { (uint32_t)drawVerts_[i].vertexCount, drawVerts_[i].indexLowerBound, drawVerts_[i].indexUpperBound, 0 };
-					fwrite(d2, sizeof(d2), 1, f);
-					fwrite(drawVerts_[i].verts, dec_->VertexSize(), drawVerts_[i].indexUpperBound + 1, f);
-				}
-				for (int i = 0; i < numDrawInds_; i++) {
-					uint32_t d3[4] = { (uint32_t)drawInds_[i].vertexCount, (uint32_t)drawInds_[i].indexType, (uint32_t)drawInds_[i].prim, (uint32_t)drawInds_[i].clockwise };
-					fwrite(d3, sizeof(d3), 1, f);
-					if (drawInds_[i].inds && drawInds_[i].indexType) fwrite(drawInds_[i].inds, drawInds_[i].indexType == 1 ? 1 : (drawInds_[i].indexType == 2 ? 2 : 4), drawInds_[i].vertexCount, f);
-				}
-				fclose(f);
-				STV_LOG("STVVOLDUMP: %s vtype=%08x prim=%d draws=%d/%d", ruta.c_str(), lastVType_, (int)prevPrim_, numDrawVerts_, numDrawInds_);
-			} else {
-				STV_LOG("STVVOLDUMP: NO pude abrir %s", ruta.c_str());
+			fv = File::OpenCFile(g_Config.memStickDirectory / nombre, "wb");
+			STV_LOG("STVVOLDUMP: abierto %s -> %s", nombre, fv ? "ok" : "FALLO");
+		}
+		if (fv && quedan > 0 && gstate.isStencilTestEnabled() && !gstate.isModeClear() &&
+			(gstate.getColorMask() & 0xFFFFFF) == 0xFFFFFF && !gstate.isDepthWriteEnabled() && numDrawVerts_ > 0) {
+			uint32_t cab[8] = { 0x4C4F5653u, lastVType_, (uint32_t)prevPrim_, (uint32_t)gstate.isCullEnabled(), (uint32_t)gstate.getCullMode(), (uint32_t)numDrawVerts_, (uint32_t)numDrawInds_, (uint32_t)dec_->VertexSize() };
+			fwrite(cab, sizeof(cab), 1, fv);
+			fwrite(gstate.worldMatrix, sizeof(float), 12, fv);
+			fwrite(gstate.viewMatrix, sizeof(float), 12, fv);
+			fwrite(gstate.projMatrix, sizeof(float), 16, fv);
+			float vp[8] = { gstate.getViewportXScale(), gstate.getViewportYScale(), gstate.getViewportZScale(), gstate.getViewportXCenter(), gstate.getViewportYCenter(), gstate.getViewportZCenter(), gstate.getOffsetX(), gstate.getOffsetY() };
+			fwrite(vp, sizeof(vp), 1, fv);
+			for (int i = 0; i < numDrawVerts_; i++) {
+				uint32_t d2[4] = { (uint32_t)drawVerts_[i].vertexCount, drawVerts_[i].indexLowerBound, drawVerts_[i].indexUpperBound, 0 };
+				fwrite(d2, sizeof(d2), 1, fv);
+				fwrite(drawVerts_[i].verts, dec_->VertexSize(), drawVerts_[i].indexUpperBound + 1, fv);
 			}
+			for (int i = 0; i < numDrawInds_; i++) {
+				uint32_t d3[4] = { (uint32_t)drawInds_[i].vertexCount, (uint32_t)drawInds_[i].indexType, (uint32_t)drawInds_[i].prim, (uint32_t)drawInds_[i].clockwise };
+				fwrite(d3, sizeof(d3), 1, fv);
+				if (drawInds_[i].inds && drawInds_[i].indexType) fwrite(drawInds_[i].inds, drawInds_[i].indexType == 1 ? 1 : (drawInds_[i].indexType == 2 ? 2 : 4), drawInds_[i].vertexCount, fv);
+			}
+			if (--quedan == 0) { fclose(fv); fv = nullptr; STV_LOG("STVVOLDUMP: cerrado (48 lotes)"); }
 		}
 	}
 
