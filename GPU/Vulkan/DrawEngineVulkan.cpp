@@ -250,6 +250,7 @@ static void StvDescribirPrimerDraw(VulkanRenderManager *rm, int prim, int verts,
 // Y la biseccion por bits: debug.stv.skipdraw 64 = saltear draws con alpha
 // test, 128 = con niebla, 256 = con depal en shader, 512 = con textura.
 static FShaderID stvUltimoFs;   // STV: ID del ultimo fragment shader calculado (los draws sin cambio de estado lo reutilizan)
+static VShaderID stvUltimoVs;   // STV: idem, vertex shader (instrumento STV_VOLUMEN_v1 nivel 2)
 // STV_CLASIF_v1 (arco Dante, 2026-10-01): histograma por segundo de los draws por categoria
 // (textura, blend, through, stencil, color enmascarado, escribe depth, modo clear) con su suma de
 // vertices, y biseccion extra por debug.stv.skipdraw: 1024 = sin textura, 2048 = through,
@@ -280,6 +281,19 @@ static bool StvClasif(int verts, const VulkanPipelineRasterStateKey &k, int prim
 				(int)gstate.getStencilOpSFail(), (int)gstate.getStencilOpZFail(), (int)gstate.getStencilOpZPass(),
 				k.stencilFailOp, k.stencilDepthFailOp, k.stencilPassOp, gstate.getStencilWriteMask(),
 				FragmentShaderDesc(stvUltimoFs).c_str());
+		}
+	}
+	// Nivel 2: TODOS los draws, uno por par de shaders distinto, con el shader de vertices.
+	if (vol >= 2) {
+		static int nV2 = 0; static uint64_t vistos2[96]; static int nVistos2 = 0;
+		uint64_t h = ((uint64_t)stvUltimoFs.d[0] * 31 + stvUltimoFs.d[1]) * 1000003ull + (uint64_t)stvUltimoVs.d[0] * 131 + stvUltimoVs.d[1] + ((uint64_t)gstate.vertType << 40);
+		bool nuevo = true;
+		for (int i = 0; i < nVistos2; i++) if (vistos2[i] == h) { nuevo = false; break; }
+		if (nuevo && nV2 < 80) {
+			if (nVistos2 < 96) vistos2[nVistos2++] = h;
+			nV2++;
+			STV_LOG("STVSHADERS verts=%d prim=%d vtype=%08x st=%d vs=[%s] fs=[%s]", verts, prim, gstate.vertType, gstate.isStencilTestEnabled() ? 1 : 0,
+				VertexShaderDesc(stvUltimoVs).c_str(), FragmentShaderDesc(stvUltimoFs).c_str());
 		}
 	}
 	if (modo <= 0 && mask <= 0) return false;
@@ -430,6 +444,7 @@ void DrawEngineVulkan::Flush() {
 
 			shaderManager_->GetShaders(prim, dec_->VertexType(), &vshader, &fshader, &gshader, pipelineState_, true, useHWTessellation_, decOptions_.expandAllWeightsToFloat, applySkinInDecode_);
 			if (fshader) stvUltimoFs = fshader->GetID();
+			if (vshader) stvUltimoVs = vshader->GetID();
 			_dbg_assert_msg_(vshader->UseHWTransform(), "Bad vshader");
 			VulkanPipeline *pipeline = pipelineManager_->GetOrCreatePipeline(renderManager, pipelineLayout_, pipelineKey_, &dec_->decFmt, vshader, fshader, gshader, true, 0, framebufferManager_->GetMSAALevel(), false);
 			if (!pipeline || !pipeline->pipeline) {
@@ -632,6 +647,7 @@ void DrawEngineVulkan::Flush() {
 
 				shaderManager_->GetShaders(prim, swDec->VertexType(), &vshader, &fshader, &gshader, pipelineState_, false, false, decOptions_.expandAllWeightsToFloat, true);
 				if (fshader) stvUltimoFs = fshader->GetID();
+			if (vshader) stvUltimoVs = vshader->GetID();
 				_dbg_assert_msg_(!vshader->UseHWTransform(), "Bad vshader");
 				VulkanPipeline *pipeline = pipelineManager_->GetOrCreatePipeline(renderManager, pipelineLayout_, pipelineKey_, &swDec->decFmt, vshader, fshader, gshader, false, 0, framebufferManager_->GetMSAALevel(), false);
 				if (!pipeline || !pipeline->pipeline) {
