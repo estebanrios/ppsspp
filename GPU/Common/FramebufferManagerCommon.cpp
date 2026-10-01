@@ -1493,13 +1493,38 @@ void FramebufferManagerCommon::CopyFramebufferForColorTexture(VirtualFramebuffer
 		gstate_c.Dirty(DIRTY_TEXTURE_PARAMS);
 	}
 
+	// STV_SELFCOPY_RECT_v1 (arco Dante, 2026-10-01): sin cotas de UV (el camino de arriba solo las
+	// tiene en through mode, y el bloom de Dante's Inferno NO es through) se copiaba el framebuffer
+	// ENTERO en cada autotextura: ~15 copias de 1024x544 por cuadro, ~9 ms de GPU. Pero la textura
+	// es una SUB-REGION conocida del framebuffer (offset + tamaño de la textura, una piramide de
+	// desenfoque 256x128 -> 16x8): lo unico que el draw puede leer es ese rectangulo. Se copia
+	// solo eso, con 1 px de margen para el bilineal. Exacto mientras el formato de la textura sea
+	// el del framebuffer (mapeo 1:1). debug.stv.selfcopy: 0 = como upstream, 2 = recorte
+	// (defecto), 1 = instrumento + recorte.
+	{
+		static int stvRect = -1;
+		if (stvRect < 0) stvRect = StvPropDef("debug.stv.selfcopy", 2);
+		if (stvRect >= 1 && !(*partial) && x == 0 && y == 0 && w == src->drawnWidth && h == src->drawnHeight &&
+			(flags & BINDFBCOLOR_APPLY_TEX_OFFSET) && (int)gstate.getTextureFormat() <= 3 &&
+			(int)gstate.getTextureFormat() == (int)src->fb_format) {
+			int tw = gstate.getTextureWidth(0), th = gstate.getTextureHeight(0);
+			int rx = gstate_c.curTextureXOffset - 1, ry = gstate_c.curTextureYOffset - 1;
+			int rx2 = gstate_c.curTextureXOffset + tw + 1, ry2 = gstate_c.curTextureYOffset + th + 1;
+			rx = std::max(rx, 0); ry = std::max(ry, 0);
+			rx2 = std::min(rx2, (int)src->drawnWidth); ry2 = std::min(ry2, (int)src->drawnHeight);
+			if (rx2 > rx && ry2 > ry && (rx2 - rx) * (ry2 - ry) < (int)src->drawnWidth * (int)src->drawnHeight) {
+				x = rx; y = ry; w = rx2 - rx; h = ry2 - ry;
+			}
+		}
+	}
+
 	// STV_SELFCOPY_v1 (instrumento, arco Dante): por que la copia de autotextura no se recorta.
 	// debug.stv.selfcopy=1 -> las primeras 64 copias y despues 1 de cada 400, a logcat (tag STV).
 	{
 		static int stvSc = -1;
 		static int stvScN = 0;
 		if (stvSc < 0) stvSc = StvPropInt("debug.stv.selfcopy");
-		if (stvSc > 0) {
+		if (stvSc == 1) {
 			stvScN++;
 			if (stvScN <= 64 || (stvScN % 400) == 0) {
 				STV_LOG("STVSELFCOPY n=%d fb=%08x tex=%08x thr=%d flags=%d vb=U%d..%d V%d..%d off=%.0f,%.0f drawn=%dx%d tw=%dx%d sc=%d,%d-%d,%d -> %d,%d %dx%d",
