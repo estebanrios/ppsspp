@@ -1581,6 +1581,12 @@ void GPUCommon::DoState(PointerWrap &p) {
 	// completo. Cubre a todos los callers (el unico real es __DisplayDoState).
 	stvge::Barrera();
 	stvge::CandadoGe candadoGe;
+	// STV_STALL_LIBRE_v1: ningun limite pendiente queda afuera del savestate (al guardar se aplica;
+	// al cargar, los pendientes viejos no valen para el estado nuevo).
+	for (int i = 0; i < DisplayListMaxCount && i < stvge::kStvMaxListas; i++) {
+		if (p.mode == PointerWrap::MODE_READ) stvge::g_stallPend[i].store(0, std::memory_order_relaxed);
+		else stvge::AplicarStallPendiente(i, &dls[i].stall);
+	}
 	auto s = p.Section("GPUCommon", 1, 6);
 	if (!s)
 		return;
