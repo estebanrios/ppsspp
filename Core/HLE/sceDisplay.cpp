@@ -63,6 +63,9 @@
 #include "GPU/GPU.h"
 #include "GPU/Common/StvGeThread.h"  // STV_GE_THREAD_v1
 #include "GPU/GPUState.h"
+#include "GPU/Common/GPUDebugInterface.h"  // STV_GEDUMP_v1
+#include "GPU/Debugger/Record.h"           // STV_GEDUMP_v1
+#include "Common/File/Path.h"
 #include "GPU/GPUCommon.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
 #include "GPU/Common/PostShader.h"
@@ -582,6 +585,22 @@ static void StvVpsPorVblank() {
 		// vps=  el propio, honesto. vps_ppsspp= el de la casa, para contrastar.
 		ERROR_LOG(Log::sceDisplay, "STVVPS: vps=%.2f vblanks=%llu dt=%.3f vps_ppsspp=%.2f presentado=%.2f",
 			vps, (unsigned long long)(vblanks - v0), dt, fvps, freal);
+	}
+	// STV_GEDUMP_v1 (arco Dante): `setprop debug.stv.gedump N` (N distinto del anterior) graba el
+	// cuadro siguiente como volcado de GE (.ppdmp en PSP/SYSTEM/DUMP). Ese archivo se abre como un
+	// juego y repite el MISMO cuadro en bucle: carga de GPU identica corrida a corrida, para medir
+	// geometria y relleno sin la variacion de la escena. Apagar el hilo del GE antes (debug.stv.ge 0).
+	{
+		static int ultimo = 0;
+		char g[PROP_VALUE_MAX] = {0};
+		int n = (__system_property_get("debug.stv.gedump", g) > 0) ? atoi(g) : 0;
+		if (n != 0 && n != ultimo && gpuDebug) {
+			ultimo = n;
+			bool ok = gpuDebug->GetRecorder()->RecordNextFrame([](const Path &ruta) {
+				ERROR_LOG(Log::sceDisplay, "STVGEDUMP: escrito %s", ruta.c_str());
+			});
+			ERROR_LOG(Log::sceDisplay, "STVGEDUMP: pedido %d -> %s", n, ok ? "grabando el cuadro siguiente" : "NO se pudo (ya grabando?)");
+		}
 	}
 #endif
 	t0 = ahora;
