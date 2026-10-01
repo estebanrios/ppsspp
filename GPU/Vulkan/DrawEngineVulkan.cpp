@@ -249,6 +249,47 @@ static void StvDescribirPrimerDraw(VulkanRenderManager *rm, int prim, int verts,
 // capas transparentes que dominan el pase principal. Con debug.stv.gpuprof=1.
 // Y la biseccion por bits: debug.stv.skipdraw 64 = saltear draws con alpha
 // test, 128 = con niebla, 256 = con depal en shader, 512 = con textura.
+// STV_CLASIF_v1 (arco Dante, 2026-10-01): histograma por segundo de los draws por categoria
+// (textura, blend, through, stencil, color enmascarado, escribe depth, modo clear) con su suma de
+// vertices, y biseccion extra por debug.stv.skipdraw: 1024 = sin textura, 2048 = through,
+// 4096 = con stencil test, 8192 = color totalmente enmascarado, 16384 = >= 500 vertices,
+// 32768 = sin textura y NO through. Con debug.stv.gpuprof=1 imprime STVCLASIF.
+static bool StvClasif(int verts) {
+	static int modo = -1, mask = -1;
+	if (modo < 0) { modo = StvPropInt("debug.stv.gpuprof"); mask = StvPropInt("debug.stv.skipdraw"); }
+	if (modo <= 0 && mask <= 0) return false;
+	bool clear = gstate.isModeClear();
+	bool tex = gstate.isTextureMapEnabled() && !clear;
+	bool bl = gstate.isAlphaBlendEnabled() && !clear;
+	bool thr = gstate.isModeThrough();
+	bool st = gstate.isStencilTestEnabled() && !clear;
+	bool cm = (gstate.getColorMask() & 0xFFFFFF) == 0xFFFFFF;
+	bool zw = gstate.isDepthWriteEnabled();
+	if (modo >= 1) {
+		static int n[128] = {}; static long v[128] = {}; static double t0 = 0;
+		int k = (tex ? 1 : 0) | (bl ? 2 : 0) | (thr ? 4 : 0) | (st ? 8 : 0) | (cm ? 16 : 0) | (zw ? 32 : 0) | (clear ? 64 : 0);
+		n[k]++; v[k] += verts;
+		double t = time_now_d();
+		if (t - t0 > 1.0) {
+			t0 = t;
+			for (int i = 0; i < 128; i++) {
+				if (!n[i]) continue;
+				STV_LOG("STVCLASIF tex=%d bl=%d thr=%d st=%d cmask=%d zw=%d clr=%d draws=%d verts=%ld", i & 1, (i >> 1) & 1, (i >> 2) & 1, (i >> 3) & 1, (i >> 4) & 1, (i >> 5) & 1, (i >> 6) & 1, n[i], v[i]);
+			}
+			memset(n, 0, sizeof(n)); memset(v, 0, sizeof(v));
+		}
+	}
+	if (mask > 0) {
+		if ((mask & 1024) && !tex) return true;
+		if ((mask & 2048) && thr) return true;
+		if ((mask & 4096) && st) return true;
+		if ((mask & 8192) && cm) return true;
+		if ((mask & 16384) && verts >= 500) return true;
+		if ((mask & 32768) && !tex && !thr) return true;
+	}
+	return false;
+}
+
 static FShaderID stvUltimoFs;   // STV: ID del ultimo fragment shader calculado (los draws sin cambio de estado lo reutilizan)
 static bool StvFsBits(const FShaderID &id, bool blend) {
 	static int modo = -1, mask = -1;
@@ -438,11 +479,11 @@ void DrawEngineVulkan::Flush() {
 			VkBuffer ibuf;
 			u32 ibOffset = (uint32_t)pushIndex_->Push(decIndex_, sizeof(uint16_t) * vertexCount, 4, &ibuf);
 			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
-			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled))
+			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(vertexCount))
 			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, vertexCount, 1);
 		} else {
 			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
-			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled))
+			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(vertexCount))
 			renderManager->Draw(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, vertexCount);
 		}
 		if (useDepthRaster_) {
@@ -672,7 +713,7 @@ void DrawEngineVulkan::Flush() {
 					}
 				}
 			}
-			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled))
+			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(result.drawNumTrans))
 			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, result.drawNumTrans, 1);
 		} else if (result.action == SW_CLEAR) {
 			// Note: we won't get here if the clear is alpha but not color, or color but not alpha.
