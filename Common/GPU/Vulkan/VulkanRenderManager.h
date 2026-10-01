@@ -428,6 +428,14 @@ public:
 		// STV (area): con debug.stv.area>=2 el area de render se acumula EN EL DRAW
 		// (scissor ∩ caja del draw cuando se conoce), no al fijar el scissor: un
 		// scissor de pantalla entera con un draw de 150x68 cargaba y volcaba 4,7 MB.
+		// STV_SCISSOR1_v1 (diagnostico, debug.stv.scissor1=1): scissor 1x1 en TODOS los draws. Rompe
+		// la imagen a proposito: casi no se rasteriza nada y lo que queda en el pase es geometria
+		// (vertices + binning). Separa "costo por pixel" de "costo por vertice".
+		{
+			static int stvSc1 = -1;
+			if (stvSc1 < 0) stvSc1 = StvPropInt("debug.stv.scissor1");
+			if (stvSc1 > 0) { rc.offset.x = 0; rc.offset.y = 0; rc.extent.width = 1; rc.extent.height = 1; }
+		}
 		curScissor_ = rc;
 		if (StvModoArea() < 2) curRenderArea_.Apply(rc);
 
