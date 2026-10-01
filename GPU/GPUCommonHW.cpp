@@ -1,3 +1,6 @@
+#include <vector>
+#include <cmath>
+#include "Common/StvProp.h"
 #include "Common/Profiler/Profiler.h"
 
 #include "Common/GPU/thin3d.h"
@@ -939,6 +942,144 @@ void GPUCommonHW::Execute_VertexTypeSkinning(u32 op, u32 diff) {
 		gstate_c.Dirty(DIRTY_RASTER_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_FRAGMENTSHADER_STATE | DIRTY_GEOMETRYSHADER_STATE | DIRTY_CULLRANGE);
 }
 
+
+// ============================================================================
+// STV_VOLSPLIT_v1 (arco Dante's Inferno, 2026-10-01): sombras por volumen mas baratas en Mali.
+//
+// Medido con contadores de hardware (volcado de GE, reloj fijo): los volumenes de sombra de Dante
+// cuestan ~24 ms de GPU por cuadro a 2x, y NO por la operacion de stencil (sin test de depth, sin
+// test de stencil o con ops KEEP cuestan lo mismo) sino por el front-end de fragmentos: carga
+// ~976 mil primitivas x tile por cuadro y rasteriza solo 142 mil. Son triangulos largos y finos
+// (lados extruidos, tapas en abanico) que el tiler jerarquico guarda en cajas gruesas y que el
+// front-end lee en cada tile de la caja aunque no cubran nada.
+//
+// Arreglo EXACTO: partir las aristas largas en tramos de <= L px de render. Cada arista se parte
+// segun SU largo y con interpolacion canonica (desde el extremo lexicograficamente menor), asi los
+// dos triangulos que la comparten generan vertices identicos bit a bit: la malla sigue cerrada,
+// sin uniones en T, con la misma orientacion y la misma area. El stencil resultante es el mismo.
+// Solo para draws que no escriben color ni depth, con stencil, triangulos, posicion float sin
+// indices (la forma de los volumenes). debug.stv.volsplit = L en px de render (0 apaga).
+// ============================================================================
+namespace {
+struct StvV3 { float x, y, z; };
+static inline bool StvMenor(const StvV3 &a, const StvV3 &b) {
+	if (a.x != b.x) return a.x < b.x;
+	if (a.y != b.y) return a.y < b.y;
+	return a.z < b.z;
+}
+static inline bool StvIgual(const StvV3 &a, const StvV3 &b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+
+struct StvProyector {
+	float m[16];  // world*view*proj combinada (columna mayor, como el PSP)
+	float xs, ys, xc, yc, ox, oy, esc;
+	void Preparar(float escala) {
+		// clip = P * (V * (W * p)) con matrices 4x3 del PSP en columna mayor.
+		float wv[16];
+		const float *W = gstate.worldMatrix, *V = gstate.viewMatrix, *P = gstate.projMatrix;
+		float w4[16] = { W[0], W[1], W[2], 0, W[3], W[4], W[5], 0, W[6], W[7], W[8], 0, W[9], W[10], W[11], 1 };
+		float v4[16] = { V[0], V[1], V[2], 0, V[3], V[4], V[5], 0, V[6], V[7], V[8], 0, V[9], V[10], V[11], 1 };
+		for (int c = 0; c < 4; c++) for (int r = 0; r < 4; r++) {
+			float acc = 0; for (int k = 0; k < 4; k++) acc += v4[k * 4 + r] * w4[c * 4 + k]; wv[c * 4 + r] = acc; }
+		for (int c = 0; c < 4; c++) for (int r = 0; r < 4; r++) {
+			float acc = 0; for (int k = 0; k < 4; k++) acc += P[k * 4 + r] * wv[c * 4 + k]; m[c * 4 + r] = acc; }
+		xs = gstate.getViewportXScale(); ys = gstate.getViewportYScale();
+		xc = gstate.getViewportXCenter(); yc = gstate.getViewportYCenter();
+		ox = gstate.getOffsetX(); oy = gstate.getOffsetY(); esc = escala;
+	}
+	// Devuelve false si el vertice esta detras de la camara (w muy chico): esa arista no se parte.
+	bool Pantalla(const StvV3 &p, float *sx, float *sy) const {
+		float cx = m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12];
+		float cy = m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13];
+		float cw = m[3] * p.x + m[7] * p.y + m[11] * p.z + m[15];
+		if (!(cw > 1e-4f)) return false;
+		*sx = (xc + xs * cx / cw - ox) * esc; *sy = (yc + ys * cy / cw - oy) * esc;
+		return std::isfinite(*sx) && std::isfinite(*sy);
+	}
+};
+
+static int StvTramos(const StvProyector &pr, const StvV3 &a, const StvV3 &b, float L) {
+	const StvV3 &lo = StvMenor(a, b) ? a : b, &hi = StvMenor(a, b) ? b : a;
+	float x0, y0, x1, y1;
+	if (!pr.Pantalla(lo, &x0, &y0) || !pr.Pantalla(hi, &x1, &y1)) return 1;
+	float d = sqrtf((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+	int n = (int)ceilf(d / L);
+	return n < 1 ? 1 : (n > 48 ? 48 : n);
+}
+// Punto k de n sobre la arista (a,b), calculado SIEMPRE desde el extremo menor: bit a bit igual
+// para los dos triangulos que comparten la arista, la recorran en el sentido que sea.
+static inline StvV3 StvPunto(const StvV3 &a, const StvV3 &b, int k, int n) {
+	if (k == 0) return a;
+	if (k == n) return b;
+	bool aMenor = StvMenor(a, b);
+	const StvV3 &lo = aMenor ? a : b, &hi = aMenor ? b : a;
+	int kk = aMenor ? k : n - k;
+	float t = (float)kk / (float)n;
+	return StvV3{ lo.x + (hi.x - lo.x) * t, lo.y + (hi.y - lo.y) * t, lo.z + (hi.z - lo.z) * t };
+}
+
+static std::vector<StvV3> stvVolBuf;
+static size_t stvVolPos = 0;
+static uint64_t stvVolTriIn = 0, stvVolTriOut = 0;
+
+// Genera la lista de triangulos partida en stvVolBuf a partir de 'pos'. Devuelve el puntero y la
+// cantidad de vertices, o nullptr si no hay lugar (el llamador usa el original).
+static const StvV3 *StvPartirVolumen(const StvV3 *in, int nIn, float L, float escala, int *nOut, bool *hayQueVaciar) {
+	StvProyector pr; pr.Preparar(escala);
+	const size_t CAP = 1u << 19;  // 512 Ki vertices = 6 MB
+	if (stvVolBuf.size() < CAP) stvVolBuf.resize(CAP);
+	// Peor caso por triangulo: 3*48 triangulos. Si no entra, se pide vaciar y se vuelve al inicio.
+	size_t peor = (size_t)(nIn / 3) * 3 * 48 * 3;
+	*hayQueVaciar = false;
+	if (peor > CAP) return nullptr;
+	if (stvVolPos + peor > CAP) { *hayQueVaciar = true; stvVolPos = 0; }
+	StvV3 *o = stvVolBuf.data() + stvVolPos;
+	StvV3 *ini = o;
+	auto emit = [&](const StvV3 &p, const StvV3 &q, const StvV3 &r) { *o++ = p; *o++ = q; *o++ = r; };
+	for (int t = 0; t + 2 < nIn; t += 3) {
+		const StvV3 v[3] = { in[t], in[t + 1], in[t + 2] };
+		stvVolTriIn++;
+		if (StvIgual(v[0], v[1]) || StvIgual(v[1], v[2]) || StvIgual(v[2], v[0])) { emit(v[0], v[1], v[2]); continue; }
+		int n[3];
+		float len[3];
+		for (int e = 0; e < 3; e++) {
+			const StvV3 &a = v[e], &b = v[(e + 1) % 3];
+			n[e] = StvTramos(pr, a, b, L);
+			float x0, y0, x1, y1;
+			len[e] = (pr.Pantalla(a, &x0, &y0) && pr.Pantalla(b, &x1, &y1)) ? (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) : 0.0f;
+		}
+		if (n[0] == 1 && n[1] == 1 && n[2] == 1) { emit(v[0], v[1], v[2]); continue; }
+		int ec = 0;  // arista mas corta
+		for (int e = 1; e < 3; e++) if (len[e] < len[ec]) ec = e;
+		if (n[ec] == 1) {
+			// Base (P,Q) sin partir, apice R: cierre entre las cadenas P->R y Q->R usando TODOS sus
+			// puntos (sin uniones en T) y el triangulo final contra el apice.
+			const StvV3 &P = v[ec], &Q = v[(ec + 1) % 3], &R = v[(ec + 2) % 3];
+			int n1 = n[(ec + 2) % 3];  // arista R->P (misma arista que P->R)
+			int n2 = n[(ec + 1) % 3];  // arista Q->R
+			int u = 0, w = 0;
+			while (u < n1 - 1 || w < n2 - 1) {
+				bool avanzaU = (w >= n2 - 1) || (u < n1 - 1 && (u + 1) * n2 <= (w + 1) * n1);
+				StvV3 cu = StvPunto(P, R, u, n1), cw = StvPunto(Q, R, w, n2);
+				if (avanzaU) { emit(cu, cw, StvPunto(P, R, u + 1, n1)); u++; }
+				else { emit(cu, cw, StvPunto(Q, R, w + 1, n2)); w++; }
+			}
+			emit(StvPunto(P, R, n1 - 1, n1), StvPunto(Q, R, n2 - 1, n2), R);
+		} else {
+			// Las tres largas: abanico desde el centroide con cada arista partida.
+			StvV3 g{ (v[0].x + v[1].x + v[2].x) * (1.0f / 3.0f), (v[0].y + v[1].y + v[2].y) * (1.0f / 3.0f), (v[0].z + v[1].z + v[2].z) * (1.0f / 3.0f) };
+			for (int e = 0; e < 3; e++) {
+				const StvV3 &a = v[e], &b = v[(e + 1) % 3];
+				for (int k = 0; k < n[e]; k++) emit(StvPunto(a, b, k, n[e]), StvPunto(a, b, k + 1, n[e]), g);
+			}
+		}
+	}
+	*nOut = (int)(o - ini);
+	stvVolTriOut += *nOut / 3;
+	stvVolPos += *nOut;
+	return ini;
+}
+}  // namespace
+
 void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 	// This drives all drawing. All other state we just buffer up, then we apply it only
 	// when it's time to draw. As most PSP games set state redundantly ALL THE TIME, this is a huge optimization.
@@ -1088,7 +1229,39 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 	// If the first one in a batch passes, let's assume the whole batch passes.
 	// Cuts down on checking, while not losing that much efficiency.
 	bool onePassed = false;
-	if (passCulling) {
+	// STV_VOLSPLIT_v1: ver el comentario de StvPartirVolumen.
+	bool stvPartido = false;
+	if (passCulling && prim == GE_PRIM_TRIANGLES && inds == nullptr && count >= 3 &&
+		(vertexType & 0xFFFFFF) == GE_VTYPE_POS_FLOAT && decoder->VertexSize() == 12 &&
+		gstate.isStencilTestEnabled() && !gstate.isModeClear() && !gstate.isDepthWriteEnabled() &&
+		(gstate.getColorMask() & 0xFFFFFF) == 0xFFFFFF) {
+		static int stvL = -1;
+		if (stvL < 0) stvL = StvPropDef("debug.stv.volsplit", 0);
+		if (stvL > 0) {
+			float esc = vfb ? vfb->renderScaleFactor : 1.0f;
+			int nNuevo = 0; bool vaciar = false;
+			const StvV3 *nuevo = StvPartirVolumen((const StvV3 *)verts, (int)(count - count % 3), (float)stvL, esc, &nNuevo, &vaciar);
+			if (nuevo && nNuevo >= 3) {
+				if (vaciar) drawEngineCommon_->Flush();  // lo pendiente pudo apuntar al buffer que se reusa
+				int leidos = 0;
+				if (!drawEngineCommon_->SubmitPrim(nuevo, nullptr, prim, nNuevo, decoder, vertTypeID, true, &leidos)) {
+					canExtend = false;
+				}
+				bytesRead = (int)count * decoder->VertexSize();  // el GE avanza por lo que el juego mando
+				stvPartido = true;
+				canExtend = false;
+				onePassed = true;
+				static int stvAviso = 0;
+				if (++stvAviso == 600) {
+					stvAviso = 0;
+					STV_LOG("STVVOLSPLIT L=%d tris %llu -> %llu", stvL, (unsigned long long)stvVolTriIn, (unsigned long long)stvVolTriOut);
+				}
+			}
+		}
+	}
+	if (stvPartido) {
+		// ya enviado
+	} else if (passCulling) {
 		if (!drawEngineCommon_->SubmitPrim(verts, inds, prim, count, decoder, vertTypeID, true, &bytesRead)) {
 			canExtend = false;
 		}
@@ -1105,6 +1278,7 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 	AdvanceVerts(vertexType, count, bytesRead);
 
 	int totalVertCount = count;
+	const bool stvSinExtender = stvPartido;  // STV_VOLSPLIT_v1: no unir PRIMs siguientes a un lote partido
 
 	// PRIMs are often followed by more PRIMs. Save some work and submit them immediately.
 	const u32_le *start = (const u32_le *)Memory::GetPointerUnchecked(currentList->pc + 4);
@@ -1118,7 +1292,7 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 
 	const uint32_t vtypeCheckMask = g_Config.bSoftwareSkinning ? (~GE_VTYPE_WEIGHTCOUNT_MASK) : 0xFFFFFFFF;
 
-	if (!useFastRunLoop_)
+	if (!useFastRunLoop_ || stvSinExtender)
 		goto bail;  // we're either recording or stepping.
 
 	while (src != stall) {
