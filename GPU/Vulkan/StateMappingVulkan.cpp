@@ -15,6 +15,7 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "Common/StvProp.h"
 #include <algorithm>
 
 #include "Common/GPU/Vulkan/VulkanRenderManager.h"
@@ -313,6 +314,31 @@ void DrawEngineVulkan::ConvertStateToVulkanKey(FramebufferManagerVulkan &fbManag
 
 					dirtyRequiresRecheck_ |= DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE;
 					gstate_c.Dirty(DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE);
+				}
+
+				// STV_ZPASS_v1 (arco Dante, EXPERIMENTO de medicion, debug.stv.zpass=1): sombras por
+				// volumen z-fail (incr/decr en depth-fail, keep en pass, sin color ni depth write)
+				// pasadas a z-pass (el op inverso en depth-pass, keep en fail). Para un volumen cerrado
+				// con la camara FUERA da el mismo stencil; con la camara dentro NO. Solo mide si el
+				// tipo de actualizacion cambia el costo en la Mali.
+				{
+					static int stvZpass = -1;
+					if (stvZpass < 0) stvZpass = StvPropInt("debug.stv.zpass");
+					if (stvZpass > 0 && key.depthTestEnable && !key.depthWriteEnable && key.colorWriteMask == 0 &&
+						key.stencilPassOp == VK_STENCIL_OP_KEEP && key.stencilFailOp == VK_STENCIL_OP_KEEP) {
+						VkStencilOp inv = VK_STENCIL_OP_KEEP;
+						switch (key.stencilDepthFailOp) {
+						case VK_STENCIL_OP_INCREMENT_AND_CLAMP: inv = VK_STENCIL_OP_DECREMENT_AND_CLAMP; break;
+						case VK_STENCIL_OP_DECREMENT_AND_CLAMP: inv = VK_STENCIL_OP_INCREMENT_AND_CLAMP; break;
+						case VK_STENCIL_OP_INCREMENT_AND_WRAP: inv = VK_STENCIL_OP_DECREMENT_AND_WRAP; break;
+						case VK_STENCIL_OP_DECREMENT_AND_WRAP: inv = VK_STENCIL_OP_INCREMENT_AND_WRAP; break;
+						default: break;
+						}
+						if (inv != VK_STENCIL_OP_KEEP) {
+							key.stencilPassOp = inv;
+							key.stencilDepthFailOp = VK_STENCIL_OP_KEEP;
+						}
+					}
 				}
 			} else {
 				key.stencilTestEnable = false;
