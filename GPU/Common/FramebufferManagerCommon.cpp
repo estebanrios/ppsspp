@@ -1430,6 +1430,14 @@ bool FramebufferManagerCommon::BindFramebufferAsColorTexture(int stage, VirtualF
 		}
 
 		Draw::Framebuffer *renderCopy = GetTempFBO(TempFBO::COPY, framebuffer->renderWidth, framebuffer->renderHeight);
+		// STV_NOCOPY_v1 (instrumento, arco GoS 1:1 STV): debug.stv.nocopy=1 NO copia (se samplea la copia
+		// vieja): mide cuanto cuestan las copias de autotextura y los cortes de pase. Rompe la imagen.
+		static int stvNoCopy = -1;
+		if (stvNoCopy < 0) stvNoCopy = StvPropInt("debug.stv.nocopy");
+		if (renderCopy && stvNoCopy == 1) {
+			draw_->BindFramebufferAsTexture(renderCopy, stage, Draw::Aspect::COLOR_BIT, layer);
+			return true;
+		}
 		if (renderCopy) {
 			VirtualFramebuffer copyInfo = *framebuffer;
 			copyInfo.fbo = renderCopy;
@@ -2033,6 +2041,34 @@ void FramebufferManagerCommon::ResizeFramebufFBO(VirtualFramebuffer *vfb, int w,
 		force1x = true;
 	}
 
+	// STV_FBESCALA_v1 (arco GoS 1:1 STV, 2026-10-01): framebuffers auxiliares listados POR JUEGO
+	// (direccion de VRAM, cualquier formato: la vista 565 y la 8888 de la misma memoria van juntas)
+	// que se renderizan a una escala menor que la de la escena. Es la misma idea que BloomHack, pero
+	// elegida por buffer: en Ghost of Sparta el mapa de sombras (04161800/04181800, siluetas suaves
+	// proyectadas al piso) cuesta ~3 ms de GPU a 1271x720 entre reinterpretaciones 565<->8888 y las
+	// cuatro capas que lo samplean. Prop debug.stv.fbescala (centesimas, 0 = apagado) pisa al ini, para el A/B.
+	{
+		// (Se lee al crear/redimensionar cada FB, que pasa al arrancar el juego: para el A/B, relanzar.)
+		const int propEsc = StvPropDef("debug.stv.fbescala", -1);
+		const int esc = propEsc >= 0 ? propEsc : g_Config.iStvFbsEscala;
+		if (esc > 0 && !g_Config.sStvFbsReducidos.empty()) {
+			char dir[16];
+			snprintf(dir, sizeof(dir), "%08x", vfb->fb_address | 0x04000000);
+			if (g_Config.sStvFbsReducidos.find(dir) != std::string::npos) {
+				const float f = esc / 100.0f;
+				if (f < renderScaleFactor_ && !force1x) {
+					vfb->renderScaleFactor = f;
+					vfb->renderWidth = (u16)StvEscalarDim(vfb->bufferWidth, f);
+					vfb->renderHeight = (u16)StvEscalarDim(vfb->bufferHeight, f);
+					static int avisos = 0;
+					if (avisos++ < 8)
+						ERROR_LOG(Log::FrameBuf, "STVFBESCALA: %s %s %dx%d -> escala %.2f (%dx%d)", dir, GeBufferFormatToString(vfb->fb_format), vfb->bufferWidth, vfb->bufferHeight, f, vfb->renderWidth, vfb->renderHeight);
+					goto stvFbEscalaHecha;
+				}
+			}
+		}
+	}
+
 	if (force1x && g_Config.iInternalResolution != 1) {
 		vfb->renderScaleFactor = 1.0f;  // STV_ESCALA_v1: literal float
 		vfb->renderWidth = vfb->bufferWidth;
@@ -2045,6 +2081,7 @@ void FramebufferManagerCommon::ResizeFramebufFBO(VirtualFramebuffer *vfb, int w,
 		vfb->renderWidth = (u16)StvEscalarDim(vfb->bufferWidth, renderScaleFactor_);
 		vfb->renderHeight = (u16)StvEscalarDim(vfb->bufferHeight, renderScaleFactor_);
 	}
+stvFbEscalaHecha:
 
 	bool creating = old.bufferWidth == 0;
 	if (creating) {

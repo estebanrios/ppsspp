@@ -338,6 +338,10 @@ public:
 	// especial. La prop debug.stv.escala la PISA cuando esta seteada (el A/B
 	// del banco manda sobre el ini).
 	int iStvEscala;
+	// STV_FBESCALA_v1: framebuffers auxiliares (por direccion de VRAM) que se renderizan a otra escala,
+	// p. ej. el mapa de sombras de Ghost of Sparta. "04161800,04181800" + escala en centesimas (100 = 1x).
+	std::string sStvFbsReducidos;
+	int iStvFbsEscala;
 	// STV F6: el worker del GE (hilo de display lists en otro nucleo).
 	// PER_GAME; la prop debug.stv.ge la PISA cuando esta seteada (el banco).
 	bool bStvWorkerGE;
@@ -784,6 +788,8 @@ private:
 
 	// If not empty, we're using a game-specific config.
 	std::string gameId_;
+	// STV_PERGAME_GUARDA_v2: valor de cada clave PER_GAME al cargar el ini por juego (seccion/clave -> texto).
+	std::map<std::string, std::string> stvFotoJuego_;
 
 	PlayTimeTracker playTimeTracker_;
 

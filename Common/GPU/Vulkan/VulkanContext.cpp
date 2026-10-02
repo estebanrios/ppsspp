@@ -10,6 +10,7 @@
 #include "Common/Log.h"
 #include "Common/GPU/Shader.h"
 #include "Common/GPU/Vulkan/VulkanContext.h"
+#include "Common/GPU/ShaderTranslation.h"  // STV_PSPCOLOR_F16_v1
 #include "Common/GPU/Vulkan/VulkanDebug.h"
 #include "Common/StringUtils.h"
 
@@ -665,6 +666,8 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 	extensionsLookup_.KHR_multiview = EnableDeviceExtension(VK_KHR_MULTIVIEW_EXTENSION_NAME, VK_API_VERSION_1_1);
 
 	extensionsLookup_.EXT_scalar_block_layout = EnableDeviceExtension(VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME, VK_API_VERSION_1_2);
+	// STV_PSPCOLOR_F16_v1: aritmetica de 16 bits en los post-shaders (float16_t). Nucleo desde 1.2.
+	extensionsLookup_.KHR_shader_float16_int8 = EnableDeviceExtension(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME, VK_API_VERSION_1_2);
 
 	if (EnableDeviceExtension(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME, VK_API_VERSION_1_1)) {
 		extensionsLookup_.KHR_get_memory_requirements2 = true;
@@ -706,6 +709,7 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 		VkPhysicalDeviceProvokingVertexFeaturesEXT provokingVertexFeatures{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT };
 		VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR presentModeFifoProps{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_MODE_FIFO_LATEST_READY_FEATURES_KHR};
 		VkPhysicalDeviceScalarBlockLayoutFeatures scalarBlockLayoutFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES};
+		VkPhysicalDeviceShaderFloat16Int8Features float16Int8Features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES };  // STV_PSPCOLOR_F16_v1
 
 		ChainStruct(features2, &multiViewFeatures);
 		if (extensionsLookup_.KHR_present_wait) {
@@ -723,11 +727,17 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 		if (extensionsLookup_.EXT_scalar_block_layout) {
 			ChainStruct(features2, &scalarBlockLayoutFeatures);
 		}
+		if (extensionsLookup_.KHR_shader_float16_int8) {
+			ChainStruct(features2, &float16Int8Features);
+		}
 		vkGetPhysicalDeviceFeatures2(physical_devices_[physical_device_], &features2);
 		deviceFeatures_.available.standard = features2.features;
 		deviceFeatures_.available.multiview = multiViewFeatures;
 		if (extensionsLookup_.EXT_scalar_block_layout) {
 			deviceFeatures_.available.scalarBlockLayout = scalarBlockLayoutFeatures;
+		}
+		if (extensionsLookup_.KHR_shader_float16_int8) {
+			deviceFeatures_.available.float16Int8 = float16Int8Features;
 		}
 		if (extensionsLookup_.KHR_present_wait) {
 			deviceFeatures_.available.presentWait = presentWaitFeatures;
@@ -792,6 +802,12 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 
 	// deviceFeatures_.enabled.multiview.multiviewGeometryShader = deviceFeatures_.available.multiview.multiviewGeometryShader;
 
+	// STV_PSPCOLOR_F16_v1: solo shaderFloat16 (aritmetica), sin int8.
+	deviceFeatures_.enabled.float16Int8 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES };
+	if (extensionsLookup_.KHR_shader_float16_int8) {
+		deviceFeatures_.enabled.float16Int8.shaderFloat16 = deviceFeatures_.available.float16Int8.shaderFloat16;
+	}
+
 	VkPhysicalDeviceFeatures2 features2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 
 	VkDeviceCreateInfo device_info{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
@@ -821,9 +837,15 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 		if (extensionsLookup_.KHR_present_mode_fifo_latest_ready) {
 			ChainStruct(features2, &deviceFeatures_.enabled.presentModeFifoProps);
 		}
+		if (extensionsLookup_.KHR_shader_float16_int8) {
+			ChainStruct(features2, &deviceFeatures_.enabled.float16Int8);
+		}
 	} else {
 		device_info.pEnabledFeatures = &deviceFeatures_.enabled.standard;
+		deviceFeatures_.enabled.float16Int8.shaderFloat16 = VK_FALSE;
 	}
+	// STV_PSPCOLOR_F16_v1: el traductor de post-shaders define STV_F16 solo si quedo habilitado.
+	StvPostShaderF16(deviceFeatures_.enabled.float16Int8.shaderFloat16 == VK_TRUE);
 
 	VkResult res = vkCreateDevice(physical_devices_[physical_device_], &device_info, nullptr, &device_);
 	if (res != VK_SUCCESS) {

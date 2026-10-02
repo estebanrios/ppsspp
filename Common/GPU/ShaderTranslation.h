@@ -30,3 +30,6 @@ void ShaderTranslationInit();
 void ShaderTranslationShutdown();
 
 bool TranslateShader(std::string *dst, ShaderLanguage destLang, const ShaderLanguageDesc &desc, TranslatedShaderMetadata *destMetadata, std::string src, ShaderLanguage srcLang, ShaderStage stage, std::string *errorMessage);
+
+// STV_PSPCOLOR_F16_v1: lo fija VulkanContext al crear el dispositivo (shaderFloat16 habilitado).
+void StvPostShaderF16(bool habilitado);

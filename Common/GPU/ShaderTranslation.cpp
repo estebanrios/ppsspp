@@ -134,6 +134,12 @@ std::string Postprocess(std::string code, ShaderLanguage lang, ShaderStage stage
 
 static_assert(Draw::SEM_TEXCOORD0 == 3, "Semantic shader hardcoded in glsl below.");
 
+// STV_PSPCOLOR_F16_v1: con shaderFloat16 habilitado, los post-shaders de Vulkan reciben STV_F16 y
+// pueden usar float16_t (GL_EXT_shader_explicit_arithmetic_types_float16). El "precision mediump"
+// de los .fsh no sirve aca: el traductor emite GLSL 450 de escritorio, donde no tiene efecto.
+static bool stvPostShaderF16 = false;
+void StvPostShaderF16(bool habilitado) { stvPostShaderF16 = habilitado; }
+
 bool ConvertToVulkanGLSL(std::string *dest, TranslatedShaderMetadata *destMetadata, std::string src, ShaderStage stage, std::string *errorMessage) {
 	std::stringstream out;
 
@@ -151,6 +157,8 @@ bool ConvertToVulkanGLSL(std::string *dest, TranslatedShaderMetadata *destMetada
 	};
 
 	out << vulkanPrologue;
+	if (stvPostShaderF16)
+		out << "#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require\n#define STV_F16 1\n";  // STV_PSPCOLOR_F16_v1
 	if (stage == ShaderStage::Fragment) {
 		out << "layout (location = 0) out vec4 fragColor0;\n";
 	}

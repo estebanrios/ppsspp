@@ -728,6 +728,8 @@ static const ConfigSetting graphicsSettings[] = {
 	ConfigSetting("InternalResolution", SETTING(g_Config, iInternalResolution), &DefaultInternalResolution, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	// STV_ESCALA_v1: ver Config.h.
 	ConfigSetting("STVEscala", SETTING(g_Config, iStvEscala), 0, CfgFlag::PER_GAME),
+	ConfigSetting("STVFbsReducidos", SETTING(g_Config, sStvFbsReducidos), "", CfgFlag::PER_GAME),  // STV_FBESCALA_v1
+	ConfigSetting("STVFbsEscala", SETTING(g_Config, iStvFbsEscala), 100, CfgFlag::PER_GAME),
 	ConfigSetting("STVWorkerGE", SETTING(g_Config, bStvWorkerGE), false, CfgFlag::PER_GAME),
 	ConfigSetting("AndroidHwScale", SETTING(g_Config, iAndroidHwScale), &DefaultAndroidHwScale, CfgFlag::DEFAULT),
 	ConfigSetting("HighQualityDepth", SETTING(g_Config, bHighQualityDepth), true, CfgFlag::PER_GAME | CfgFlag::REPORT),
@@ -1842,6 +1844,20 @@ bool Config::DeleteGameConfig(std::string_view gameId) {
 	return true;
 }
 
+// STV_PERGAME_GUARDA_v2: valor de una clave como lo escribiria el ini (para comparar sin tipos).
+static std::string StvValorTexto(const ConfigSetting &setting, const ConfigBlock *block) {
+	IniFile tmp;
+	Section *sec = tmp.GetOrCreateSection("stv");
+	setting.WriteToIniSection(block, sec);
+	std::string v;
+	sec->Get(setting.IniKey(), &v);
+	return v;
+}
+
+static std::string StvClaveFoto(const ConfigSectionMeta &meta, const ConfigSetting &setting) {
+	return std::string(meta.section) + "/" + std::string(setting.IniKey());
+}
+
 bool Config::SaveGameConfig(const std::string &gameId, std::string_view titleForComment) {
 	if (gameId.empty()) {
 		return false;
@@ -1865,6 +1881,25 @@ bool Config::SaveGameConfig(const std::string &gameId, std::string_view titleFor
 		top->AddComment(StringFromFormat("Game config for %s - %.*s", gameId.c_str(), STR_VIEW(titleForComment)));
 	}
 
+	// STV_PERGAME_GUARDA_v2: las claves que el usuario CAMBIO en esta sesion (contra la foto tomada
+	// al cargar el ini por juego). Se calcula ANTES de PreSaveCleanup, que retoca valores.
+	std::map<std::string, bool> stvCambiadas;
+	if (!stvFotoJuego_.empty()) {
+		for (const ConfigSectionMeta &meta : g_sectionMeta) {
+			// Las posiciones del control tactil las INICIALIZA el juego al crear la pantalla (despues de
+			// cargar el ini): no son cambios del usuario. Medido: 30 claves "cambiadas" sin tocar nada.
+			if (meta.section.substr(0, 13) == "TouchControls")
+				continue;
+			for (size_t j = 0; j < meta.settingsCount; j++) {
+				if (!meta.settings[j].PerGame())
+					continue;
+				auto it = stvFotoJuego_.find(StvClaveFoto(meta, meta.settings[j]));
+				if (it != stvFotoJuego_.end() && it->second != StvValorTexto(meta.settings[j], meta.configBlock))
+					stvCambiadas[it->first] = true;
+			}
+		}
+	}
+
 	PreSaveCleanup();
 
 	// Do all the actual saving.
@@ -1884,18 +1919,37 @@ bool Config::SaveGameConfig(const std::string &gameId, std::string_view titleFor
 	//
 	// Y se agravo al agregar el guardado en NativeApp.pause: cada HOME
 	// re-congelaba el snapshot.
+	//
+	// STV_PERGAME_GUARDA_v2 (arco GoS 1:1 STV, 2026-10-01): y TAMBIEN las que el usuario cambio en esta
+	// sesion. Sin esto, un ajuste PER_GAME que el ini por juego no traia (la resolucion de Ghost of
+	// Sparta, cuyo ini de fabrica solo tiene BloomHack) se perdia en silencio: el guardado global
+	// saltea las PER_GAME cuando hay ini por juego, y este no las escribia por no estar. Cada partida
+	// volvia a arrancar con el x2 del global.
+	int stvAgregadas = 0;
 	for (const ConfigSectionMeta &meta : g_sectionMeta) {
 		Section *section = iniFile.GetSection(meta.section);
-		if (!section)
-			continue;   // seccion que este ini no tiene: no se inventa
 		ConfigBlock *configBlock = meta.configBlock;
 		for (size_t j = 0; j < meta.settingsCount; j++) {
 			if (!meta.settings[j].PerGame())
 				continue;
 			std::string yaEstaba;
-			if (!section->Get(meta.settings[j].IniKey(), &yaEstaba))
-				continue;   // no estaba: la decide el ini global
+			const bool estaba = section && section->Get(meta.settings[j].IniKey(), &yaEstaba);
+			if (!estaba && !stvCambiadas.count(StvClaveFoto(meta, meta.settings[j])))
+				continue;   // no estaba y no se toco: la decide el ini global
+			if (!section)
+				section = iniFile.GetOrCreateSection(meta.section);
 			meta.settings[j].WriteToIniSection(configBlock, section);
+			if (!estaba)
+				stvAgregadas++;
+		}
+	}
+	if (stvAgregadas)
+		ERROR_LOG(Log::Loader, "STVPERGAME: %d clave(s) cambiada(s) en la sesion agregada(s) al ini por juego %s", stvAgregadas, gameId.c_str());
+	// La foto pasa a ser lo guardado: un segundo guardado no vuelve a contar lo mismo.
+	for (const ConfigSectionMeta &meta : g_sectionMeta) {
+		for (size_t j = 0; j < meta.settingsCount; j++) {
+			if (meta.settings[j].PerGame() && !stvFotoJuego_.empty())
+				stvFotoJuego_[StvClaveFoto(meta, meta.settings[j])] = StvValorTexto(meta.settings[j], meta.configBlock);
 		}
 	}
 
@@ -1984,6 +2038,15 @@ bool Config::LoadGameConfig(const std::string &gameId) {
 
 	PostLoadCleanup();
 
+	// STV_PERGAME_GUARDA_v2: foto de las PER_GAME tal como quedaron al cargar (global + por juego).
+	stvFotoJuego_.clear();
+	for (const ConfigSectionMeta &meta : g_sectionMeta) {
+		for (size_t j = 0; j < meta.settingsCount; j++) {
+			if (meta.settings[j].PerGame())
+				stvFotoJuego_[StvClaveFoto(meta, meta.settings[j])] = StvValorTexto(meta.settings[j], meta.configBlock);
+		}
+	}
+
 	DEBUG_LOG(Log::Loader, "Game-specific config loaded: %s", gameId_.c_str());
 	return true;
 }
@@ -1993,6 +2056,7 @@ void Config::UnloadGameConfig() {
 
 	// Leave game-specific mode.
 	gameId_.clear();
+	stvFotoJuego_.clear();  // STV_PERGAME_GUARDA_v2
 
 	// Reload all settings from the main ini file.
 	IniFile iniFile;

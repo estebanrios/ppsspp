@@ -159,8 +159,76 @@ void DrawEngineVulkan::DeviceRestore(Draw::DrawContext *draw) {
 	InitDeviceObjects();
 }
 
+// STV_DRAWINFO_v1 (arco GoS 1:1 STV, 2026-10-01): en un tiler el tiempo por draw no se puede medir
+// (Mali difiere los fragmentos al final del pase), asi que el costo de cada draw se saca por
+// BISECCION de indices. Cada draw que llega a la GPU lleva un indice dentro del cuadro (se reinicia
+// en BeginFrame). Con `debug.stv.drawinfo=1` se describe cada draw de uno de cada 60 cuadros
+// (STVDI: destino, vertices, estado y la textura que samplea: tamaño PSP, formato PSP y de Vulkan,
+// niveles, o el framebuffer si es render-a-textura). Con `debug.stv.skiprng=a:b` se saltean los
+// draws con indice en [a,b) -- rompe la imagen a proposito, es un instrumento. Las dos props se
+// releen en cada cuadro (se pueden mover en caliente).
+static TextureCacheVulkan *stvDiTex = nullptr;
+static int stvDiIdx = 0, stvDiFrame = 0, stvDiModo = 0, stvDiA = -1, stvDiB = -1;
+static void StvDrawInfoCuadro() {
+	stvDiFrame++;
+	stvDiIdx = 0;
+	stvDiModo = StvPropInt("debug.stv.drawinfo");
+	stvDiA = stvDiB = -1;
+#if defined(__ANDROID__)
+	char v[PROP_VALUE_MAX] = {0};
+	if (__system_property_get("debug.stv.skiprng", v) > 0 && v[0]) {
+		int a = -1, b = -1;
+		if (sscanf(v, "%d:%d", &a, &b) == 2 && a >= 0 && b > a) { stvDiA = a; stvDiB = b; }
+	}
+#endif
+}
+static bool StvDrawInfo(int verts, const VulkanPipelineRasterStateKey &k, int prim) {
+	const int i = stvDiIdx++;
+	if (stvDiModo > 0 && (stvDiFrame % 60) == 0) {
+		const bool clear = gstate.isModeClear();
+		const bool tex = gstate.isTextureMapEnabled() && !clear;
+		char t[200] = "-";
+		if (tex && stvDiTex) {
+			const TexCacheEntry *e = stvDiTex->StvEntradaActual();
+			const VirtualFramebuffer *fb = stvDiTex->StvFbTexturaActual();
+			if (fb) {
+				snprintf(t, sizeof(t), "FB %08x %dx%d fmt%d render %dx%d", fb->fb_address, fb->width, fb->height, (int)fb->fb_format, fb->renderWidth, fb->renderHeight);
+			} else if (e) {
+				const VulkanTexture *vt = e->vkTex;
+				snprintf(t, sizeof(t), "%08x %dx%d ge%d clut%d lvl%d bufw%d vk%d %dx%d mips%d", e->addr, gstate.getTextureWidth(0), gstate.getTextureHeight(0),
+					(int)e->format, (int)gstate.getClutPaletteFormat(), (int)e->maxLevel, (int)e->bufw,
+					vt ? (int)vt->GetFormat() : -1, vt ? vt->GetWidth() : 0, vt ? vt->GetHeight() : 0, vt ? vt->GetNumMips() : 0);
+			}
+		}
+		STV_LOG("STVDI f=%d i=%d rt=%08x v=%d prim=%d bl=%d thr=%d zt=%d zw=%d st=%d fog=%d at=%d clr=%d cmask=%06x minf=%d magf=%d tx=%s",
+			stvDiFrame, i, gstate.getFrameBufRawAddress(), verts, prim, (int)k.blendEnable, gstate.isModeThrough() ? 1 : 0,
+			gstate.isDepthTestEnabled() ? 1 : 0, gstate.isDepthWriteEnabled() ? 1 : 0, gstate.isStencilTestEnabled() ? 1 : 0,
+			gstate.isFogEnabled() ? 1 : 0, gstate.isAlphaTestEnabled() ? 1 : 0, clear ? 1 : 0, gstate.getColorMask() & 0xFFFFFF,
+			(int)gstate.isMinifyFilteringEnabled(), (int)gstate.isMagnifyFilteringEnabled(), t);
+	}
+	return stvDiA >= 0 && i >= stvDiA && i < stvDiB;
+}
+
+// STV_TEXSONDA_v1 (arco GoS 1:1 STV): sonda para separar el costo de TEXTURA del de fragmentos en el
+// pase principal. debug.stv.texsonda=2: sampler nearest para toda textura que no sea framebuffer (un
+// texel por muestra, misma huella). Rompe la imagen a proposito. (El modo 1, vista nula 1x1, se
+// quito: la vista nula no coincide con el tipo de vista que esperan los sombreadores y se caia.)
+static int stvTexSondaModo = 0;
+static VkSampler stvTexSondaNearest = VK_NULL_HANDLE;
+static void StvTexSonda(VkImageView &view, VkSampler &sampler) {
+	if (stvTexSondaModo <= 0 || !stvDiTex || stvDiTex->StvFbTexturaActual())
+		return;
+	if (stvTexSondaModo == 2 && stvTexSondaNearest != VK_NULL_HANDLE)
+		sampler = stvTexSondaNearest;
+	(void)view;
+}
+
 void DrawEngineVulkan::BeginFrame() {
 	DrawEngineCommon::BeginFrame();
+	stvDiTex = textureCache_;  // STV_DRAWINFO_v1
+	StvDrawInfoCuadro();
+	stvTexSondaModo = StvPropInt("debug.stv.texsonda");  // STV_TEXSONDA_v1
+	stvTexSondaNearest = samplerSecondaryNearest_;
 
 	lastPipeline_ = nullptr;
 
@@ -529,6 +597,7 @@ void DrawEngineVulkan::Flush() {
 			descCount = 9;
 		int descSetIndex;
 		PackedDescriptor *descriptors = renderManager->PushDescriptorSet(descCount, &descSetIndex);
+		StvTexSonda(imageView, sampler);  // STV_TEXSONDA_v1 (instrumento, apagado por defecto)
 		descriptors[0].image.view = imageView;
 		descriptors[0].image.sampler = sampler;
 
@@ -566,11 +635,11 @@ void DrawEngineVulkan::Flush() {
 			VkBuffer ibuf;
 			u32 ibOffset = (uint32_t)pushIndex_->Push(decIndex_, sizeof(uint16_t) * vertexCount, 4, &ibuf);
 			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
-			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(vertexCount, pipelineKey_, (int)prim))
+			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(vertexCount, pipelineKey_, (int)prim) && !StvDrawInfo(vertexCount, pipelineKey_, (int)prim))
 			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, vertexCount, 1);
 		} else {
 			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
-			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(vertexCount, pipelineKey_, (int)prim))
+			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(vertexCount, pipelineKey_, (int)prim) && !StvDrawInfo(vertexCount, pipelineKey_, (int)prim))
 			renderManager->Draw(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, vertexCount);
 		}
 		if (useDepthRaster_) {
@@ -733,6 +802,7 @@ void DrawEngineVulkan::Flush() {
 			int descCount = 6;
 			int descSetIndex;
 			PackedDescriptor *descriptors = renderManager->PushDescriptorSet(descCount, &descSetIndex);
+			StvTexSonda(imageView, sampler);  // STV_TEXSONDA_v1 (instrumento, apagado por defecto)
 			descriptors[0].image.view = imageView;
 			descriptors[0].image.sampler = sampler;
 			descriptors[1].image.view = boundSecondary_;
@@ -801,7 +871,7 @@ void DrawEngineVulkan::Flush() {
 					}
 				}
 			}
-			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(result.drawNumTrans, pipelineKey_, (int)prim))
+			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(result.drawNumTrans, pipelineKey_, (int)prim) && !StvDrawInfo(result.drawNumTrans, pipelineKey_, (int)prim))
 			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, result.drawNumTrans, 1);
 		} else if (result.action == SW_CLEAR) {
 			// Note: we won't get here if the clear is alpha but not color, or color but not alpha.

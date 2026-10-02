@@ -274,6 +274,7 @@ struct VulkanExtensions {
 	bool EXT_provoking_vertex;
 	bool KHR_present_mode_fifo_latest_ready;
 	bool EXT_scalar_block_layout;
+	bool KHR_shader_float16_int8;  // STV_PSPCOLOR_F16_v1
 	// bool EXT_depth_range_unrestricted;  // Allows depth outside [0.0, 1.0] in 32-bit float depth buffers.
 };
 

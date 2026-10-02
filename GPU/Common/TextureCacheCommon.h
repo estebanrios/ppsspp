@@ -386,6 +386,10 @@ public:
 		return !videos_.empty();
 	}
 	virtual bool GetCurrentTextureDebug(GPUDebugBuffer &buffer, int level, bool *isFramebuffer) { return false; }
+	// STV_DRAWINFO_v1 (arco GoS 1:1 STV): lo que va a samplear el proximo draw, para el instrumento por draw.
+	// (ApplyTexture suelta nextTexture_: se recuerda lo ultimo aplicado.)
+	const TexCacheEntry *StvEntradaActual() const { return stvUltimaEntrada_; }
+	const VirtualFramebuffer *StvFbTexturaActual() const { return stvUltimoFb_; }
 
 	virtual void StartFrame();
 
@@ -543,6 +547,8 @@ protected:
 	AlignedVector<u32, 16> tmpTexBufRearrange_;
 
 	TexCacheEntry *nextTexture_ = nullptr;
+	const TexCacheEntry *stvUltimaEntrada_ = nullptr;  // STV_DRAWINFO_v1
+	const VirtualFramebuffer *stvUltimoFb_ = nullptr;
 	bool failedTexture_ = false;
 	VirtualFramebuffer *nextFramebufferTexture_ = nullptr;
 	RasterChannel nextFramebufferTextureChannel_ = RASTER_COLOR;

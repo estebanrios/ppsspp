@@ -2170,6 +2170,8 @@ void TextureCacheCommon::ApplyTexture(bool doBind) {
 			// Backends should handle this by binding a black texture with 0 alpha.
 			BindTexture(nullptr);
 		} else if (nextFramebufferTexture_) {
+			stvUltimaEntrada_ = nullptr;  // STV_DRAWINFO_v1
+			stvUltimoFb_ = nextFramebufferTexture_;
 			// ApplyTextureFrameBuffer is responsible for setting SetTextureFullAlpha.
 			ApplyTextureFramebuffer(nextFramebufferTexture_, gstate.getTextureFormat(), nextFramebufferTextureChannel_);
 			nextFramebufferTexture_ = nullptr;
@@ -2181,6 +2183,8 @@ void TextureCacheCommon::ApplyTexture(bool doBind) {
 	}
 
 	nextTexture_ = nullptr;
+	stvUltimaEntrada_ = entry;  // STV_DRAWINFO_v1
+	stvUltimoFb_ = nullptr;
 
 	UpdateMaxSeenV(entry, gstate.isModeThrough());
 
