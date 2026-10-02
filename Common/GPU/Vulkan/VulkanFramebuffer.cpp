@@ -197,6 +197,19 @@ void VKRFramebuffer::CreateImage(VulkanContext *vulkan, VulkanBarrierBatch *barr
 		if (stvAfbc == 1) ici.usage &= ~(VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
 	}
 
+	// STV_SINAFBC_v1 (instrumento, arco GoS 1:1 STV 2026-10-02): debug.stv.sinafbc=N crea SIN compresion
+	// (AFBC) los render targets de color de N px de ancho o mas. Pregunta: muestrear un framebuffer
+	// grande con paso de ~5 texels (la bajada del bloom) cuesta por descomprimir superbloques enteros?
+	VkImageCompressionControlEXT stvComp{ VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_CONTROL_EXT };
+	{
+		static int stvSinAfbc = -1;
+		if (stvSinAfbc < 0) { stvSinAfbc = StvPropInt("debug.stv.sinafbc"); STV_LOG("STVSINAFBC: ancho minimo=%d", stvSinAfbc); }
+		if (stvSinAfbc > 0 && color && width >= stvSinAfbc && vulkan->Extensions().EXT_image_compression_control) {
+			stvComp.flags = VK_IMAGE_COMPRESSION_DISABLED_EXT;
+			ici.pNext = &stvComp;
+		}
+	}
+
 	VmaAllocationCreateInfo allocCreateInfo{};
 	allocCreateInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
 	VmaAllocationInfo allocInfo{};

@@ -19,6 +19,7 @@
 #include <thread>
 
 #include "Common/Profiler/Profiler.h"
+#include "Common/StvProp.h"  // STV_VARY_PACK_v1
 
 #include "Common/Log.h"
 #include "Common/TimeUtil.h"
@@ -290,6 +291,8 @@ u32 GPU_Vulkan::CheckGPUFeatures() const {
 			features |= GPU_USE_VS_RANGE_CULLING;
 		}
 	}
+
+	StvVaryPackGS() = (features & GPU_USE_GS_CULLING) != 0;  // STV_VARY_PACK_v1
 
 	// Attempt to workaround #17386
 	if (draw_->GetBugs().Has(Draw::Bugs::UNIFORM_INDEXING_BROKEN)) {

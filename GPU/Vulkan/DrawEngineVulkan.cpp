@@ -37,6 +37,8 @@
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/ShaderUniforms.h"
 #include "GPU/Vulkan/DrawEngineVulkan.h"
+#include "GPU/Vulkan/StvSombraRecorte.h"  // STV_SOMBRA_RECORTE_v1
+#include "Common/Math/CrossSIMD.h"
 #include "Common/StvProp.h"
 #include "Common/File/FileUtil.h"  // STV_VOLDUMP_v1
 #include "Core/Config.h"
@@ -169,18 +171,34 @@ void DrawEngineVulkan::DeviceRestore(Draw::DrawContext *draw) {
 // releen en cada cuadro (se pueden mover en caliente).
 static TextureCacheVulkan *stvDiTex = nullptr;
 static int stvDiIdx = 0, stvDiFrame = 0, stvDiModo = 0, stvDiA = -1, stvDiB = -1;
+static int stvSwA = -1, stvSwB = -1;  // debug.stv.swforzar
+static const TransformedVertex *stvDiTV = nullptr;  // STVDI3: vertices transformados (through/software) del draw actual
+static int stvDiTVn = 0;
 static void StvDrawInfoCuadro() {
 	stvDiFrame++;
 	stvDiIdx = 0;
 	stvDiModo = StvPropInt("debug.stv.drawinfo");
 	stvDiA = stvDiB = -1;
+	stvSwA = stvSwB = -1;
 #if defined(__ANDROID__)
+	{
+		char w[PROP_VALUE_MAX] = {0};
+		if (__system_property_get("debug.stv.swforzar", w) > 0 && w[0]) {
+			int a = -1, b = -1;
+			if (sscanf(w, "%d:%d", &a, &b) == 2 && a >= 0 && b > a) { stvSwA = a; stvSwB = b; }
+		}
+	}
 	char v[PROP_VALUE_MAX] = {0};
 	if (__system_property_get("debug.stv.skiprng", v) > 0 && v[0]) {
 		int a = -1, b = -1;
 		if (sscanf(v, "%d:%d", &a, &b) == 2 && a >= 0 && b > a) { stvDiA = a; stvDiB = b; }
 	}
 #endif
+}
+// STVDI3: debug.stv.swforzar=a:b fuerza la transformacion por SOFTWARE en los draws de indice [a,b) para
+// que STVDI3 vea sus vertices en pantalla y sus UV (instrumento: SW y HW pueden diferir en detalles).
+static bool StvForzarSw() {
+	return stvSwA >= 0 && stvDiIdx >= stvSwA && stvDiIdx < stvSwB;
 }
 static bool StvDrawInfo(int verts, const VulkanPipelineRasterStateKey &k, int prim) {
 	const int i = stvDiIdx++;
@@ -200,13 +218,47 @@ static bool StvDrawInfo(int verts, const VulkanPipelineRasterStateKey &k, int pr
 					vt ? (int)vt->GetFormat() : -1, vt ? vt->GetWidth() : 0, vt ? vt->GetHeight() : 0, vt ? vt->GetNumMips() : 0);
 			}
 		}
+		if (stvDiModo >= 3 && stvDiTV && stvDiTVn > 0) {
+			float b[8] = {1e9f, 1e9f, -1e9f, -1e9f, 1e9f, 1e9f, -1e9f, -1e9f};
+			for (int k = 0; k < stvDiTVn; k++) {
+				const TransformedVertex &tv = stvDiTV[k];
+				b[0] = std::min(b[0], tv.x); b[1] = std::min(b[1], tv.y); b[2] = std::max(b[2], tv.x); b[3] = std::max(b[3], tv.y);
+				b[4] = std::min(b[4], tv.u); b[5] = std::min(b[5], tv.v); b[6] = std::max(b[6], tv.u); b[7] = std::max(b[7], tv.v);
+			}
+			char vs[400]; int o = 0;
+			for (int k = 0; k < std::min(stvDiTVn, 6); k++)
+				o += snprintf(vs + o, sizeof(vs) - o, " (%.2f,%.2f|%.4f,%.4f|%08x)", stvDiTV[k].x, stvDiTV[k].y, stvDiTV[k].u, stvDiTV[k].v, stvDiTV[k].color0_32);
+			if (stvDiModo >= 4) {
+				for (int k0 = 0; k0 < stvDiTVn; k0 += 8) {
+					char ls[800]; int lo = 0;
+					for (int k = k0; k < std::min(stvDiTVn, k0 + 8); k++)
+						lo += snprintf(ls + lo, sizeof(ls) - lo, " %.2f,%.2f,%.3f,%.4f,%.4f,%.3f", stvDiTV[k].x, stvDiTV[k].y, stvDiTV[k].pos_w, stvDiTV[k].u, stvDiTV[k].v, stvDiTV[k].uv_w);
+					STV_LOG("STVDI4 f=%d i=%d k=%d%s", stvDiFrame, i, k0, ls);
+				}
+			}
+			STV_LOG("STVDI3 f=%d i=%d n=%d xy=%.2f,%.2f-%.2f,%.2f uv=%.4f,%.4f-%.4f,%.4f uvscale=%.5f,%.5f,%.5f,%.5f v:%s", stvDiFrame, i, stvDiTVn, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+				gstate_c.uv.uScale, gstate_c.uv.vScale, gstate_c.uv.uOff, gstate_c.uv.vOff, vs);
+		}
+		if (stvDiModo >= 2) {
+			STV_LOG("STVDI5 f=%d i=%d texaddr=%08x tw=%d th=%d bufw=%d clamp=%d/%d uvgen=%d uvproj=%d curTex=%dx%d off=%d,%d fbaddr=%08x fbw=%d fmt=%d ofs=%d,%d",
+				stvDiFrame, i, gstate.getTextureAddress(0), gstate.getTextureWidth(0), gstate.getTextureHeight(0), gstate.getTextureWidth(0) ? (int)(gstate.texbufwidth[0] & 0x7FF) : 0,
+				gstate.isTexCoordClampedS() ? 1 : 0, gstate.isTexCoordClampedT() ? 1 : 0, (int)gstate.getUVGenMode(), (int)gstate.getUVProjMode(),
+				(int)gstate_c.curTextureWidth, (int)gstate_c.curTextureHeight, gstate_c.curTextureXOffset, gstate_c.curTextureYOffset,
+				gstate.getFrameBufAddress(), gstate.FrameBufStride(), (int)gstate.FrameBufFormat(), gstate.getOffsetX16(), gstate.getOffsetY16());
+			STV_LOG("STVDI2 f=%d i=%d bA=%d bB=%d beq=%d fixA=%06x fixB=%06x sfunc=%d sref=%02x smask=%02x sop=%d/%d/%d swm=%02x zf=%d afunc=%d aref=%02x tfn=%d talpha=%d dbl=%d amask=%d",
+				stvDiFrame, i, (int)gstate.getBlendFuncA(), (int)gstate.getBlendFuncB(), (int)gstate.getBlendEq(), gstate.getFixA(), gstate.getFixB(),
+				(int)gstate.getStencilTestFunction(), gstate.getStencilTestRef(), gstate.getStencilTestMask(),
+				(int)gstate.getStencilOpSFail(), (int)gstate.getStencilOpZFail(), (int)gstate.getStencilOpZPass(), (int)gstate.getStencilWriteMask(),
+				(int)gstate.getDepthTestFunction(), (int)gstate.getAlphaTestFunction(), gstate.getAlphaTestRef(),
+				(int)gstate.getTextureFunction(), gstate.isTextureAlphaUsed() ? 1 : 0, gstate.isColorDoublingEnabled() ? 1 : 0, gstate.isClearModeAlphaMask() ? 1 : 0);
+		}
 		STV_LOG("STVDI f=%d i=%d rt=%08x v=%d prim=%d bl=%d thr=%d zt=%d zw=%d st=%d fog=%d at=%d clr=%d cmask=%06x minf=%d magf=%d tx=%s",
 			stvDiFrame, i, gstate.getFrameBufRawAddress(), verts, prim, (int)k.blendEnable, gstate.isModeThrough() ? 1 : 0,
 			gstate.isDepthTestEnabled() ? 1 : 0, gstate.isDepthWriteEnabled() ? 1 : 0, gstate.isStencilTestEnabled() ? 1 : 0,
 			gstate.isFogEnabled() ? 1 : 0, gstate.isAlphaTestEnabled() ? 1 : 0, clear ? 1 : 0, gstate.getColorMask() & 0xFFFFFF,
 			(int)gstate.isMinifyFilteringEnabled(), (int)gstate.isMagnifyFilteringEnabled(), t);
 	}
-	return stvDiA >= 0 && i >= stvDiA && i < stvDiB;
+	return stvDiA >= 0 && i >= stvDiA && i < stvDiB && StvAbActivo();
 }
 
 // STV_TEXSONDA_v1 (arco GoS 1:1 STV): sonda para separar el costo de TEXTURA del de fragmentos en el
@@ -215,7 +267,17 @@ static bool StvDrawInfo(int verts, const VulkanPipelineRasterStateKey &k, int pr
 // quito: la vista nula no coincide con el tipo de vista que esperan los sombreadores y se caia.)
 static int stvTexSondaModo = 0;
 static VkSampler stvTexSondaNearest = VK_NULL_HANDLE;
+static FramebufferManagerCommon *stvTsFbm = nullptr;
 static void StvTexSonda(VkImageView &view, VkSampler &sampler) {
+	// modo 3 (instrumento, no exacto): las lecturas de un framebuffer ESCALADO hacia uno al menos 2 veces
+	// mas chico (la bajada del bloom) con sampler nearest: mide cuanto cuesta el filtro de 2 filas.
+	if (stvTexSondaModo == 3 && stvDiTex && stvDiTex->StvFbTexturaActual() && stvTsFbm && StvAbActivo()) {
+		const VirtualFramebuffer *src = stvDiTex->StvFbTexturaActual();
+		const VirtualFramebuffer *rt = stvTsFbm->GetCurrentRenderVFB();
+		if (rt && src->renderScaleFactor >= 2.0f * rt->renderScaleFactor && stvTexSondaNearest != VK_NULL_HANDLE)
+			sampler = stvTexSondaNearest;
+		return;
+	}
 	if (stvTexSondaModo <= 0 || !stvDiTex || stvDiTex->StvFbTexturaActual())
 		return;
 	if (stvTexSondaModo == 2 && stvTexSondaNearest != VK_NULL_HANDLE)
@@ -227,8 +289,28 @@ void DrawEngineVulkan::BeginFrame() {
 	DrawEngineCommon::BeginFrame();
 	stvDiTex = textureCache_;  // STV_DRAWINFO_v1
 	StvDrawInfoCuadro();
+	// STV_AB_v1: fase del cuadro y pase de marca en la fase B (ver Common/StvProp.h)
+	{
+		static int faseAnt = -1;
+		StvAbFase() = StvPropInt("debug.stv.ab") == 1 ? 1 : 0;
+		if (StvAbFase() != faseAnt) {   // el estado cacheado (pipeline, stencil, blend) puede depender de la fase
+			faseAnt = StvAbFase();
+			gstate_c.Dirty(DIRTY_DEPTHSTENCIL_STATE | DIRTY_BLEND_STATE | DIRTY_FRAGMENTSHADER_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_RASTER_STATE);
+		}
+	}
+	StvAbGate() = StvPropInt("debug.stv.abgate");
+	StvSombra::InicioCuadro();  // STV_SOMBRA_RECORTE_v1
+	if ((StvAbGate() || StvPropInt("debug.stv.abmarca") == 1) && StvAbFase() == 1 && draw_) {
+		static Draw::Framebuffer *stvMarca = nullptr;
+		if (!stvMarca) stvMarca = draw_->CreateFramebuffer({ 32, 32, 1, 1, 0, false, "STVMarcaAB" });
+		if (stvMarca) {
+			draw_->BindFramebufferAsRenderTarget(stvMarca, { Draw::RPAction::CLEAR, Draw::RPAction::CLEAR, Draw::RPAction::CLEAR, 0xFF00FF00 }, "STVMarcaAB");
+			draw_->Invalidate(InvalidationFlags::CACHED_RENDER_STATE);
+		}
+	}
 	stvTexSondaModo = StvPropInt("debug.stv.texsonda");  // STV_TEXSONDA_v1
 	stvTexSondaNearest = samplerSecondaryNearest_;
+	stvTsFbm = framebufferManager_;
 
 	lastPipeline_ = nullptr;
 
@@ -426,6 +508,368 @@ static bool StvFsBits(const FShaderID &id, bool blend) {
 	return false;
 }
 
+// ===== STV_DRAW_NULO_v1 (arco GoS 1:1 STV, 2026-10-02) ============================================
+// Un draw cuya mezcla es dst*1 + src*0 (FIX 0xFFFFFF y FIX 0) y que no escribe profundidad ni
+// stencil/alfa (con el test de stencil apagado PPSSPP no escribe alfa) no cambia ningun bit: no se
+// envia. Ghost of Sparta dibuja uno a pantalla entera leyendo el framebuffer principal (2 % de la GPU).
+// debug.stv.nulo=0 lo apaga; respeta STV_AB_v1.
+static bool StvDrawNulo() {
+	static int modo = -1;
+	if (modo < 0) modo = StvPropDef("debug.stv.nulo", 1);
+	if (modo < 1 || !StvAbActivo() || gstate.isModeClear()) return false;
+	if (!gstate.isAlphaBlendEnabled() || gstate.getBlendEq() != GE_BLENDMODE_MUL_AND_ADD) return false;
+	if (gstate.getBlendFuncA() != GE_SRCBLEND_FIXA || gstate.getFixA() != 0) return false;
+	if (gstate.getBlendFuncB() != GE_DSTBLEND_FIXB || gstate.getFixB() != 0xFFFFFF) return false;
+	if (gstate.isLogicOpEnabled() || gstate.isStencilTestEnabled()) return false;
+	if (gstate.isDepthTestEnabled() && gstate.isDepthWriteEnabled()) return false;
+	static int n = 0;
+	if (modo >= 2 && (++n % 600) == 1) STV_LOG("STVNULO: draw nulo salteado (%d)", n);
+	return true;
+}
+
+// ===== STV_SOMBRA_RECORTE_v1 =====================================================================
+Mat4F32 ComputeFinalProjMatrix();  // DrawEngineCommon.cpp
+static GEBufferFormat StvSomFmtTex(GETextureFormat f) { return f == GE_TFMT_8888 ? GE_FORMAT_8888 : GE_FORMAT_565; }
+static bool StvSomTexFmtOk(GETextureFormat f) { return f == GE_TFMT_5650 || f == GE_TFMT_5551 || f == GE_TFMT_4444 || f == GE_TFMT_8888; }
+static int StvSomTexStride() { return gstate.texbufwidth[0] & 0x7FF; }
+static int StvSomPitchRT() { return gstate.FrameBufStride() * StvSombra::Bpp(gstate.FrameBufFormat()); }
+
+// 0 = nada que hacer en la CPU, 1 = silueta (destino dentro de un area), 2 = proyeccion candidata.
+int DrawEngineVulkan::StvSomClasificarHW() {
+	using namespace StvSombra;
+	if (Modo() < 1) return 0;
+	VramIntacta();
+	if (Modo() >= 3 && (stvDiFrame % 120) == 0)
+		STV_LOG("STVSOMBRA3 HW i=%d rt=%08x through=%d areas=%d tex=%08x uvgen=%d", stvDiIdx, gstate.getFrameBufAddress(), gstate.isModeThrough() ? 1 : 0, (int)Areas().size(), gstate.getTextureAddress(0), (int)gstate.getUVGenMode());
+	if (Areas().empty()) return 0;
+	const u32 rt = gstate.getFrameBufAddress();
+	const int pitch = StvSomPitchRT();
+	int x, y;
+	Area *aSil = nullptr;
+	if (!gstate.isModeThrough() && !gstate.isModeClear() && (aSil = AreaDe(rt, pitch, &x, &y)) != nullptr) {
+		if ((lastVType_ & GE_VTYPE_WEIGHT_MASK) && !applySkinInDecode_) { Escritura(rt, pitch); return 0; }
+		// presupuesto por cuadro: GoS dibuja 4 siluetas (~2.700 vertices). Un area que recibe decenas de draws
+		// 3D es la escena (en GoW CoO un borrado negro creaba un area sobre todo el framebuffer): dejar de
+		// seguirla, sin gastar CPU transformando la escena entera.
+		aSil->nSil++; aSil->nVert += numDrawVerts_ > 0 ? (int)ComputeNumVertsToDecode() : 0;
+		if (aSil->nSil > 16 || aSil->nVert > 12000) { Invalidar(*aSil); return 0; }
+		return 1;
+	}
+	const VirtualFramebuffer *vfb = framebufferManager_->GetCurrentRenderVFB();
+	Escritura(rt, pitch, vfb ? vfb->height : 512);
+	if (!Activo() || gstate.isModeThrough() || gstate.isModeClear() || !gstate.isTextureMapEnabled()) return 0;
+	if (gstate.getUVGenMode() != GE_TEXMAP_TEXTURE_MATRIX || gstate.getUVProjMode() != GE_PROJMAP_POSITION) return 0;
+	St().cand++;
+	int r = 0;
+	if (!gstate.isAlphaBlendEnabled() || gstate.getBlendEq() != GE_BLENDMODE_MUL_AND_ADD) r = 1;
+	else if (gstate.getBlendFuncA() != GE_SRCBLEND_FIXA || gstate.getFixA() != 0 || gstate.getBlendFuncB() != GE_DSTBLEND_INVSRCCOLOR) r = 2;
+	else if (gstate.getTextureFunction() != GE_TEXFUNC_REPLACE || gstate.isColorDoublingEnabled() || gstate.isFogEnabled()) r = 3;
+	else if (gstate.isLogicOpEnabled() || gstate.isColorTestEnabled() || gstate.isStencilTestEnabled()) r = 4;
+	else if (gstate.isDepthTestEnabled() && gstate.isDepthWriteEnabled()) r = 5;
+	else if (!gstate.isTexCoordClampedS() || !gstate.isTexCoordClampedT()) r = 6;
+	else if (!StvSomTexFmtOk(gstate.getTextureFormat())) r = 7;
+	else if ((lastVType_ & GE_VTYPE_WEIGHT_MASK) && !applySkinInDecode_) r = 8;
+	else if (!AreaDe(gstate.getTextureAddress(0), StvSomTexStride() * Bpp(StvSomFmtTex(gstate.getTextureFormat())), &x, &y)) r = 10;
+	if (r) { St().rech[r]++; return 0; }
+	return 2;
+}
+
+void DrawEngineVulkan::StvSomSilueta(GEPrimitiveType prim, int vertexCount, bool useElements, VulkanRenderManager *rm) {
+	using namespace StvSombra;
+	float m[16];
+	ComputeFinalProjMatrix().Store(m);
+	const DecVtxFormat &f = dec_->GetDecVtxFmt();
+	static std::vector<float> xy;
+	xy.resize((size_t)numDecodedVerts_ * 2);
+	Caja c = { 1e9f, 1e9f, -1e9f, -1e9f };
+	for (int i = 0; i < numDecodedVerts_; i++) {
+		const float *p = (const float *)(decoded_ + i * f.stride + f.posoff);
+		const float X = p[0] * m[0] + p[1] * m[4] + p[2] * m[8] + m[12];
+		const float Y = p[0] * m[1] + p[1] * m[5] + p[2] * m[9] + m[13];
+		const float W = p[0] * m[3] + p[1] * m[7] + p[2] * m[11] + m[15];
+		if (!(W > 1e-4f)) { Escritura(gstate.getFrameBufAddress(), StvSomPitchRT()); return; }
+		xy[i * 2] = X / W; xy[i * 2 + 1] = Y / W;
+		c.x1 = std::min(c.x1, xy[i * 2]); c.y1 = std::min(c.y1, xy[i * 2 + 1]); c.x2 = std::max(c.x2, xy[i * 2]); c.y2 = std::max(c.y2, xy[i * 2 + 1]);
+	}
+	if (c.x1 > c.x2) return;
+	// acotar el area de render del pase a la caja del draw (todos los vertices adelante de la camara: la caja
+	// en pantalla contiene cada fragmento). Mismo mecanismo que el area de los draws through (f27).
+	{
+		const VirtualFramebuffer *vfb = framebufferManager_->GetCurrentRenderVFB();
+		if (rm && vfb && vfb->renderScaleFactor > 0.0f) {
+			const float e = vfb->renderScaleFactor;
+			const int offX = std::max(gstate_c.curRTOffsetX, 0), offY = std::max(gstate_c.curRTOffsetY, 0);
+			rm->StvAcotarProximoDraw(std::max(0, (int)floorf((c.x1 + offX) * e) - 2), std::max(0, (int)floorf((c.y1 + offY) * e) - 2),
+				(int)ceilf((c.x2 + offX) * e) + 2, (int)ceilf((c.y2 + offY) * e) + 2);
+		}
+	}
+	// v2: una caja por triangulo (la silueta ocupa mucho menos que su caja envolvente)
+	if (prim == GE_PRIM_TRIANGLES && vertexCount >= 3) {
+		bool ok = true;
+		for (int i = 0; i < vertexCount && ok; i++) if ((useElements ? decIndex_[i] : i) >= numDecodedVerts_) ok = false;
+		if (ok) {
+			for (int t = 0; t + 2 < vertexCount; t += 3) {
+				int k0 = useElements ? decIndex_[t] : t, k1 = useElements ? decIndex_[t + 1] : t + 1, k2 = useElements ? decIndex_[t + 2] : t + 2;
+				const Caja ct = { std::min({ xy[k0 * 2], xy[k1 * 2], xy[k2 * 2] }), std::min({ xy[k0 * 2 + 1], xy[k1 * 2 + 1], xy[k2 * 2 + 1] }),
+					std::max({ xy[k0 * 2], xy[k1 * 2], xy[k2 * 2] }), std::max({ xy[k0 * 2 + 1], xy[k1 * 2 + 1], xy[k2 * 2 + 1] }) };
+				Sucio3D(gstate.getFrameBufAddress(), gstate.FrameBufStride(), gstate.FrameBufFormat(), ct);
+			}
+			return;
+		}
+	}
+	Sucio3D(gstate.getFrameBufAddress(), gstate.FrameBufStride(), gstate.FrameBufFormat(), c);
+}
+
+// Devuelve false si el draw no cambia NADA (se puede saltear). Si devuelve true y el scissor quedo
+// definido (*sx2 > *sx1), es la caja en pixeles de render del render target.
+bool DrawEngineVulkan::StvSomProyeccion(GEPrimitiveType prim, int vertexCount, bool useElements, int *sx1, int *sy1, int *sx2, int *sy2, std::vector<StvSomSub> *subs) {
+	using namespace StvSombra;
+	*sx1 = *sy1 = *sx2 = *sy2 = 0;
+	St().proyecciones++;
+	if (prim != GE_PRIM_TRIANGLES) return true;
+	const int bpp = Bpp(StvSomFmtTex(gstate.getTextureFormat()));
+	int tx, ty;
+	Area *a = AreaDe(gstate.getTextureAddress(0), StvSomTexStride() * bpp, &tx, &ty);
+	if (!a) return true;
+	const int tw = gstate.getTextureWidth(0), th = gstate.getTextureHeight(0);
+	const Caja T = { (float)tx, (float)ty, (float)(tx + tw * bpp), (float)(ty + th) };   // bytes x filas
+	if (!Dentro(T, a->rect)) return true;
+	// v2: tiras de celdas sucias dentro de la textura, en TEXELS relativos a la textura
+	static std::vector<Caja> tiras;
+	a->Tiras(T, &tiras);
+	if (tiras.empty()) { St().salteadas++; return false; }   // la casilla entera es cero: el draw no cambia nada
+	const float inf = INFINITY;
+	struct RU { float u0, u1, v0, v1; };
+	static std::vector<RU> rs;
+	rs.clear();
+	for (const Caja &k : tiras) {
+		const Caja R = { std::floor((std::max(k.x1, T.x1) - T.x1) / bpp), std::max(k.y1, T.y1) - T.y1, std::ceil((std::min(k.x2, T.x2) - T.x1) / bpp), std::min(k.y2, T.y2) - T.y1 };
+		if (R.x1 >= R.x2 || R.y1 >= R.y2) continue;
+		// un texel i influye en las muestras con u*tw en (i-0.5, i+1.5); 1 texel mas de margen. Borde + clamp -> infinito
+		rs.push_back(RU{ R.x1 <= 1 ? -inf : (R.x1 - 1.5f) / tw, R.x2 >= tw - 1 ? inf : (R.x2 + 1.5f) / tw,
+			R.y1 <= 1 ? -inf : (R.y1 - 1.5f) / th, R.y2 >= th - 1 ? inf : (R.y2 + 1.5f) / th });
+	}
+	if (rs.empty()) { St().salteadas++; return false; }
+	float m[16];
+	ComputeFinalProjMatrix().Store(m);
+	const float *g = gstate.tgenMatrix;
+	const DecVtxFormat &f = dec_->GetDecVtxFmt();
+	static std::vector<V7> vs;
+	vs.resize(numDecodedVerts_);
+	for (int i = 0; i < numDecodedVerts_; i++) {
+		const float *p = (const float *)(decoded_ + i * f.stride + f.posoff);
+		V7 &v = vs[i];
+		v.X = p[0] * m[0] + p[1] * m[4] + p[2] * m[8] + m[12];
+		v.Y = p[0] * m[1] + p[1] * m[5] + p[2] * m[9] + m[13];
+		v.Z = 0.0f;
+		v.W = p[0] * m[3] + p[1] * m[7] + p[2] * m[11] + m[15];
+		v.u = p[0] * g[0] + p[1] * g[3] + p[2] * g[6] + g[9];
+		v.v = p[0] * g[1] + p[1] * g[4] + p[2] * g[7] + g[10];
+		v.q = p[0] * g[2] + p[1] * g[5] + p[2] * g[8] + g[11];
+	}
+	static std::vector<u16> sec;
+	const u16 *ind = decIndex_;
+	if (!useElements) {
+		sec.resize(vertexCount);
+		for (int i = 0; i < vertexCount; i++) sec[i] = (u16)i;
+		ind = sec.data();
+	}
+	for (int i = 0; i < vertexCount; i++) if (ind[i] >= numDecodedVerts_) return true;   // indices fuera: no tocar
+	// bloques de pantalla de B px PSP: los que algun poligono recortado puede tocar
+	const VirtualFramebuffer *vfb = framebufferManager_->GetCurrentRenderVFB();
+	if (!vfb || vfb->renderScaleFactor <= 0.0f) return true;
+	static int Bp = -1, Bb = -1, nB = 0;
+	if (Bp < 0 || (++nB & 63) == 0) { Bp = std::max(2, StvPropDef("debug.stv.sombra.b", 8)); Bb = StvPropInt("debug.stv.sombra.bb"); }
+	const int B = (StvAbFase() == 1 && Bb > 1) ? Bb : Bp;
+	const int nbx = (vfb->width + B - 1) / B, nby = (vfb->height + B - 1) / B;
+	static std::vector<uint8_t> bloques;
+	bloques.assign((size_t)nbx * nby, 0);
+	bool hay = false;
+	std::vector<V7> pol;
+	for (int t = 0; t + 2 < vertexCount; t += 3) {
+		const V7 *tri[3] = { &vs[ind[t]], &vs[ind[t + 1]], &vs[ind[t + 2]] };
+		// rechazo rapido: con q > 0 en los 3 vertices, la caja (u/q, v/q) del triangulo contiene la de cualquier punto
+		bool qpos = tri[0]->q > 0 && tri[1]->q > 0 && tri[2]->q > 0;
+		float tu0 = 0, tu1 = 0, tv0 = 0, tv1 = 0;
+		if (qpos) {
+			tu0 = tu1 = tri[0]->u / tri[0]->q; tv0 = tv1 = tri[0]->v / tri[0]->q;
+			for (int k = 1; k < 3; k++) { const float u = tri[k]->u / tri[k]->q, v = tri[k]->v / tri[k]->q; tu0 = std::min(tu0, u); tu1 = std::max(tu1, u); tv0 = std::min(tv0, v); tv1 = std::max(tv1, v); }
+		}
+		for (const RU &r : rs) {
+			if (qpos && (tu1 < r.u0 || tu0 > r.u1 || tv1 < r.v0 || tv0 > r.v1)) continue;
+			for (int sgn = 0; sgn < 2; sgn++) {
+				if (qpos && sgn == 1) continue;
+				const float sg = sgn == 0 ? 1.0f : -1.0f;
+				pol.assign({ *tri[0], *tri[1], *tri[2] });
+				Recortar(pol, [](const V7 &v) { return v.W - 1e-4f; });
+				Recortar(pol, [&](const V7 &v) { return sg * v.q; });
+				if (std::isfinite(r.u0)) Recortar(pol, [&](const V7 &v) { return sg * (v.u - r.u0 * v.q); });
+				if (std::isfinite(r.u1)) Recortar(pol, [&](const V7 &v) { return sg * (r.u1 * v.q - v.u); });
+				if (std::isfinite(r.v0)) Recortar(pol, [&](const V7 &v) { return sg * (v.v - r.v0 * v.q); });
+				if (std::isfinite(r.v1)) Recortar(pol, [&](const V7 &v) { return sg * (r.v1 * v.q - v.v); });
+				if (pol.empty()) continue;
+				float x1 = 1e9f, y1 = 1e9f, x2 = -1e9f, y2 = -1e9f;
+				for (const V7 &v : pol) { const float x = v.X / v.W, y = v.Y / v.W; x1 = std::min(x1, x); y1 = std::min(y1, y); x2 = std::max(x2, x); y2 = std::max(y2, y); }
+				const int bx1 = std::max(0, (int)std::floor((x1 - 1.0f) / B)), bx2 = std::min(nbx - 1, (int)std::floor((x2 + 1.0f) / B));
+				const int by1 = std::max(0, (int)std::floor((y1 - 1.0f) / B)), by2 = std::min(nby - 1, (int)std::floor((y2 + 1.0f) / B));
+				for (int by = by1; by <= by2; by++) for (int bx = bx1; bx <= bx2; bx++) { bloques[(size_t)by * nbx + bx] = 1; hay = true; }
+			}
+		}
+	}
+	if (!hay) { St().salteadas++; return false; }
+	// bloques -> rectangulos disjuntos (tiras por fila, unidas con la fila anterior si coinciden)
+	struct RB { int x1, y1, x2, y2; };
+	static std::vector<RB> rb;
+	rb.clear();
+	for (int by = 0; by < nby; by++) {
+		int bx = 0;
+		while (bx < nbx) {
+			while (bx < nbx && !bloques[(size_t)by * nbx + bx]) bx++;
+			if (bx >= nbx) break;
+			int e = bx;
+			while (e < nbx && bloques[(size_t)by * nbx + e]) e++;
+			bool unida = false;
+			for (RB &k : rb) if (k.x1 == bx && k.x2 == e && k.y2 == by) { k.y2 = by + 1; unida = true; break; }
+			if (!unida) rb.push_back(RB{ bx, by, e, by + 1 });
+			bx = e;
+		}
+	}
+	// cada rectangulo es un draw aparte (la malla entera se procesa otra vez: trabajo de vertices/tiler):
+	// juntar hasta K rectangulos, siempre el par cuya caja unida agrega menos area. Solo se juntan pares
+	// cuya caja unida no pisa otro rectangulo (los rectangulos tienen que seguir siendo disjuntos).
+	// medido en vivo: 3 mejor que 1, 2 y sin limite. En la fase B del A/B se puede usar otro (sombra.kb).
+	static int Kp = -1, Kb = -1, nK = 0;
+	if (Kp < 0 || (++nK & 63) == 0) { Kp = std::max(1, StvPropDef("debug.stv.sombra.k", 3)); Kb = StvPropInt("debug.stv.sombra.kb"); }
+	const int K = (StvAbFase() == 1 && Kb > 0) ? Kb : Kp;
+	auto areaRB = [](const RB &r) { return (long)(r.x2 - r.x1) * (r.y2 - r.y1); };
+	while ((int)rb.size() > K) {
+		long mejor = -1; size_t mi = 0, mj = 0;
+		for (size_t i = 0; i < rb.size(); i++) for (size_t j = i + 1; j < rb.size(); j++) {
+			const RB u = { std::min(rb[i].x1, rb[j].x1), std::min(rb[i].y1, rb[j].y1), std::max(rb[i].x2, rb[j].x2), std::max(rb[i].y2, rb[j].y2) };
+			bool pisa = false;
+			for (size_t k = 0; k < rb.size() && !pisa; k++) {
+				if (k == i || k == j) continue;
+				if (rb[k].x1 < u.x2 && u.x1 < rb[k].x2 && rb[k].y1 < u.y2 && u.y1 < rb[k].y2) pisa = true;
+			}
+			if (pisa) continue;
+			const long extra = areaRB(u) - areaRB(rb[i]) - areaRB(rb[j]);
+			if (mejor < 0 || extra < mejor) { mejor = extra; mi = i; mj = j; }
+		}
+		if (mejor < 0) {
+			// ningun par se puede juntar sin pisar: todo en una caja
+			RB u = rb[0];
+			for (const RB &r : rb) { u.x1 = std::min(u.x1, r.x1); u.y1 = std::min(u.y1, r.y1); u.x2 = std::max(u.x2, r.x2); u.y2 = std::max(u.y2, r.y2); }
+			rb.assign(1, u);
+			break;
+		}
+		const RB u = { std::min(rb[mi].x1, rb[mj].x1), std::min(rb[mi].y1, rb[mj].y1), std::max(rb[mi].x2, rb[mj].x2), std::max(rb[mi].y2, rb[mj].y2) };
+		rb[mi] = u; rb.erase(rb.begin() + mj);
+	}
+	const float e = vfb->renderScaleFactor;
+	const int offX = std::max(gstate_c.curRTOffsetX, 0), offY = std::max(gstate_c.curRTOffsetY, 0);
+	float ux1 = 1e9f, uy1 = 1e9f, ux2 = -1e9f, uy2 = -1e9f;
+	if (subs) subs->clear();
+	for (const RB &k : rb) {
+		StvSomSub q; q.primero = 0; q.cuenta = vertexCount;
+		// bordes de bloque en px PSP -> render; los rectangulos son disjuntos en PSP y se redondean igual en los dos
+		// lados, asi que tambien son disjuntos en render (cada pixel se dibuja a lo sumo una vez)
+		q.x1 = (int)std::floor((k.x1 * B + offX) * e); q.x2 = (int)std::floor((k.x2 * B + offX) * e);
+		q.y1 = (int)std::floor((k.y1 * B + offY) * e); q.y2 = (int)std::floor((k.y2 * B + offY) * e);
+		if (subs) subs->push_back(q);
+		ux1 = std::min(ux1, (float)q.x1); uy1 = std::min(uy1, (float)q.y1); ux2 = std::max(ux2, (float)q.x2); uy2 = std::max(uy2, (float)q.y2);
+		St().areaRecorte2 += (double)(k.x2 - k.x1) * (k.y2 - k.y1) * B * B;
+	}
+	*sx1 = (int)ux1; *sy1 = (int)uy1; *sx2 = (int)ux2; *sy2 = (int)uy2;
+	if (subs && subs->size() <= 1) subs->clear();   // uno solo: alcanza con el scissor de la caja
+	St().recortadas++;
+	return true;
+}
+
+// Camino por software (through, clears): reconocer el rectangulo de bytes cero y la copia del desenfoque.
+void DrawEngineVulkan::StvSomThrough(const SoftwareTransformResult &result, bool esClear, GEPrimitiveType prim, const u16 *inds, int nInds) {
+	using namespace StvSombra;
+	if (Modo() < 1) return;
+	VramIntacta();
+	const u32 rt = gstate.getFrameBufAddress();
+	const int st = gstate.FrameBufStride();
+	const GEBufferFormat fmt = gstate.FrameBufFormat();
+	const int pitch = StvSomPitchRT();
+	const VirtualFramebuffer *vfb = framebufferManager_->GetCurrentRenderVFB();
+	const int filas = vfb ? vfb->height : 512;
+	const bool sinMascara = (gstate.getColorMask() & 0xFFFFFF) == 0 && !gstate.isLogicOpEnabled();
+	// En 8888 el byte de alfa es el stencil: para que el resultado sea CERO tiene que quedar en 0.
+	const bool alfaCero = fmt != GE_FORMAT_8888 ||
+		(gstate.isStencilTestEnabled() && gstate.getStencilTestFunction() == GE_COMP_ALWAYS && gstate.getStencilOpZPass() == GE_STENCILOP_ZERO &&
+		 gstate.getStencilOpZFail() == GE_STENCILOP_ZERO && gstate.getStencilOpSFail() == GE_STENCILOP_ZERO && gstate.getStencilWriteMask() == 0);
+	if (esClear && Modo() >= 3 && (stvDiFrame % 120) == 0)
+		STV_LOG("STVSOMBRA3 CLEAR i=%d rt=%08x color=%08x cmask=%d", stvDiIdx, rt, result.color, gstate.isClearModeColorMask() ? 1 : 0);
+	if (esClear) {
+		const bool alfaOk = fmt != GE_FORMAT_8888 || (gstate.isClearModeAlphaMask() && (result.color >> 24) == 0);
+		if (gstate.isClearModeColorMask() && sinMascara && (result.color & 0xFFFFFF) == 0 && alfaOk) {
+			Caja c = result.stvBboxValido ? Caja{ result.stvBbox[0], result.stvBbox[1], result.stvBbox[2], result.stvBbox[3] }
+				: Caja{ 0, 0, (float)(vfb ? vfb->width : 0), (float)filas };
+			Negro(rt, st, fmt, c);
+		} else if (gstate.isClearModeColorMask() || gstate.isClearModeAlphaMask()) {
+			Escritura(rt, pitch, filas);
+		}
+		return;
+	}
+	const bool through = gstate.isModeThrough();
+	const bool cubre = through && result.stvBboxValido && result.stvCubre;
+	const bool testsOk = !gstate.isColorTestEnabled() && (!gstate.isAlphaTestEnabled() || gstate.getAlphaTestFunction() == GE_COMP_ALWAYS) &&
+		(!gstate.isDepthTestEnabled() || gstate.getDepthTestFunction() == GE_COMP_ALWAYS) &&
+		(!gstate.isStencilTestEnabled() || gstate.getStencilTestFunction() == GE_COMP_ALWAYS);
+	const Caja dst = { result.stvBbox[0], result.stvBbox[1], result.stvBbox[2], result.stvBbox[3] };
+	const TransformedVertex *tv = transformed_;   // un vertice por vertice decodificado (antes de expandir rects)
+	// vertices de ESTE draw (por indices; el buffer puede tener restos). En rectangulos el color sale del
+	// SEGUNDO vertice de cada par (el primero se ignora).
+	const bool rects = prim == GE_PRIM_RECTANGLES;
+	bool indOk = tv && inds && nInds > 0;
+	for (int i = 0; indOk && i < nInds; i++) if (inds[i] >= numDecodedVerts_) indOk = false;
+	if (Modo() >= 3 && (stvDiFrame % 120) == 0) {
+		STV_LOG("STVSOMBRA3 i=%d rt=%08x st=%d fmt=%d through=%d bbox=%d cubre=%d tests=%d sinMasc=%d alfa0=%d tex=%d blend=%d A=%d B=%d nind=%d prim=%d bb=%.0f,%.0f,%.0f,%.0f",
+			stvDiIdx, rt, st, (int)fmt, through ? 1 : 0, result.stvBboxValido ? 1 : 0, result.stvCubre ? 1 : 0, testsOk ? 1 : 0, sinMascara ? 1 : 0, alfaCero ? 1 : 0,
+			gstate.isTextureMapEnabled() ? 1 : 0, gstate.isAlphaBlendEnabled() ? 1 : 0, (int)gstate.getBlendFuncA(), (int)gstate.getBlendFuncB(), nInds, (int)prim,
+			dst.x1, dst.y1, dst.x2, dst.y2);
+	}
+	if (cubre && testsOk && sinMascara && indOk) {
+		if (!gstate.isTextureMapEnabled()) {
+			bool negro = true, opaco = true;
+			for (int i = rects ? 1 : 0; i < nInds; i += rects ? 2 : 1) {
+				const u32 c = tv[inds[i]].color0_32;
+				if (c & 0xFFFFFF) negro = false;
+				if ((c >> 24) != 0xFF) opaco = false;
+			}
+			const bool blendCopia = !gstate.isAlphaBlendEnabled() ||
+				(opaco && gstate.getBlendEq() == GE_BLENDMODE_MUL_AND_ADD && gstate.getBlendFuncA() == GE_SRCBLEND_SRCALPHA && gstate.getBlendFuncB() == GE_DSTBLEND_INVSRCALPHA);
+			if (negro && blendCopia && alfaCero) { Negro(rt, st, fmt, dst); return; }
+		} else if (!gstate.isAlphaBlendEnabled() && !gstate.isColorDoublingEnabled() && StvSomTexFmtOk(gstate.getTextureFormat()) && fmt != GE_FORMAT_8888) {
+			bool blanco = true;
+			for (int i = rects ? 1 : 0; i < nInds; i += rects ? 2 : 1) if ((tv[inds[i]].color0_32 & 0xFFFFFF) != 0xFFFFFF) blanco = false;
+			const GETexFunc fn = gstate.getTextureFunction();
+			const u32 ta = gstate.getTextureAddress(0);
+			if (fn == GE_TEXFUNC_REPLACE || (fn == GE_TEXFUNC_MODULATE && blanco)) {
+				// en through las UV de transformed_ estan en TEXELS de la textura (origen = su direccion)
+				float u1 = 1e9f, v1 = 1e9f, u2 = -1e9f, v2 = -1e9f;
+				for (int i = 0; i < nInds; i++) {
+					const TransformedVertex &t = tv[inds[i]];
+					u1 = std::min(u1, t.u); u2 = std::max(u2, t.u); v1 = std::min(v1, t.v); v2 = std::max(v2, t.v);
+				}
+				const Caja src = { u1, v1, u2, v2 };
+				const int tw = gstate.getTextureWidth(0), th = gstate.getTextureHeight(0);
+				const bool clampEntera = gstate.isTexCoordClampedS() && gstate.isTexCoordClampedT() &&
+					fabsf(src.x1) < 0.01f && fabsf(src.y1) < 0.01f && fabsf(src.x2 - tw) < 0.01f && fabsf(src.y2 - th) < 0.01f;
+				const int sbpp = Bpp(StvSomFmtTex(gstate.getTextureFormat()));
+				if (Modo() >= 3 && (stvDiFrame % 120) == 0)
+					STV_LOG("STVSOMBRA3   copia ta=%08x src=%.1f,%.1f-%.1f,%.1f tw=%d th=%d clamp=%d", ta, src.x1, src.y1, src.x2, src.y2, tw, th, clampEntera ? 1 : 0);
+				Copia(ta, StvSomTexStride(), sbpp, src, clampEntera, rt, st, Bpp(fmt), dst);
+				return;
+			}
+		}
+	}
+	Escritura(rt, pitch, filas);
+}
+
 void DrawEngineVulkan::Flush() {
 	if (!numDrawVerts_) {
 		return;
@@ -458,7 +902,7 @@ void DrawEngineVulkan::Flush() {
 	if (renderManager->GetVulkanContext()->GetDeviceFeatures().enabled.provokingVertex.provokingVertexLast) {
 		provokingVertexOk = true;
 	}
-	bool useHWTransform = CanUseHardwareTransform(prim) && provokingVertexOk;
+	bool useHWTransform = CanUseHardwareTransform(prim) && provokingVertexOk && !StvForzarSw();
 
 	// The optimization to avoid indexing isn't really worth it on Vulkan since it means creating more pipelines.
 	// This could be avoided with the new dynamic state extensions, but not available enough on mobile.
@@ -514,7 +958,8 @@ void DrawEngineVulkan::Flush() {
 		uint32_t vbOffset;
 
 		VkBuffer vbuf = VK_NULL_HANDLE;
-		if (applySkinInDecode_ && (lastVType_ & GE_VTYPE_WEIGHT_MASK)) {
+		const int stvSomTipo = StvSomClasificarHW();  // STV_SOMBRA_RECORTE_v1: 1 silueta, 2 proyeccion (necesitan posiciones en CPU)
+		if ((applySkinInDecode_ && (lastVType_ & GE_VTYPE_WEIGHT_MASK)) || stvSomTipo != 0) {
 			// If software skinning, we're predecoding into "decoded". So make sure we're done, then push that content.
 			DecodeVerts(dec_, decoded_);
 			VkDeviceSize size = numDecodedVerts_ * dec_->GetDecVtxFmt().stride;
@@ -532,6 +977,14 @@ void DrawEngineVulkan::Flush() {
 		int maxIndex;
 		bool useElements;
 		DecodeIndsAndGetData(&prim, &vertexCount, &maxIndex, &useElements, false);
+		// STV_SOMBRA_RECORTE_v1
+		bool stvSomSaltar = false;
+		int stvSx1 = 0, stvSy1 = 0, stvSx2 = 0, stvSy2 = 0;
+		if (stvSomTipo == 1) StvSomSilueta(prim, vertexCount, useElements, renderManager);
+		static std::vector<StvSomSub> stvSubs;
+		stvSubs.clear();
+		if (stvSomTipo == 2) stvSomSaltar = !StvSomProyeccion(prim, vertexCount, useElements, &stvSx1, &stvSy1, &stvSx2, &stvSy2, &stvSubs);
+		if (StvDrawNulo()) stvSomSaltar = true;  // STV_DRAW_NULO_v1
 
 		bool hasColor = (lastVType_ & GE_VTYPE_COL_MASK) != GE_VTYPE_COL_NONE;
 		if (gstate.isModeThrough()) {
@@ -589,6 +1042,20 @@ void DrawEngineVulkan::Flush() {
 		}
 		lastPrim_ = prim;
 
+		// STV_SOMBRA_RECORTE_v1: scissor = (scissor del juego) ∩ (caja donde la sombra puede cambiar algo)
+		if (stvSx2 > stvSx1 && stvSy2 > stvSy1 && !stvSomSaltar) {
+			const int x1 = std::max(stvSx1, dynState_.scissor.x), y1 = std::max(stvSy1, dynState_.scissor.y);
+			const int x2 = std::min(stvSx2, dynState_.scissor.x + dynState_.scissor.width), y2 = std::min(stvSy2, dynState_.scissor.y + dynState_.scissor.height);
+			if (x2 <= x1 || y2 <= y1) {
+				stvSomSaltar = true;
+			} else {
+				renderManager->SetScissor(x1, y1, x2 - x1, y2 - y1);
+				gstate_c.Dirty(DIRTY_VIEWPORTSCISSOR_STATE);   // el proximo draw vuelve a fijar el scissor del juego
+				StvSombra::St().areaTotal += (double)dynState_.scissor.width * dynState_.scissor.height;
+				StvSombra::St().areaRecorte += (double)(x2 - x1) * (y2 - y1);
+			}
+		}
+
 		dirtyUniforms_ |= shaderManager_->UpdateUniforms(framebufferManager_->UseBufferedRendering());
 		UpdateUBOs();
 
@@ -635,11 +1102,25 @@ void DrawEngineVulkan::Flush() {
 			VkBuffer ibuf;
 			u32 ibOffset = (uint32_t)pushIndex_->Push(decIndex_, sizeof(uint16_t) * vertexCount, 4, &ibuf);
 			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
-			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(vertexCount, pipelineKey_, (int)prim) && !StvDrawInfo(vertexCount, pipelineKey_, (int)prim))
-			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, vertexCount, 1);
+			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(vertexCount, pipelineKey_, (int)prim) && !StvDrawInfo(vertexCount, pipelineKey_, (int)prim) && !stvSomSaltar) {
+				if (!stvSubs.empty()) {
+					// STV_SOMBRA_RECORTE_v1: un draw por grupo de triangulos, cada uno con su scissor (cada triangulo se dibuja UNA vez)
+					const int gx1 = dynState_.scissor.x, gy1 = dynState_.scissor.y, gx2 = gx1 + dynState_.scissor.width, gy2 = gy1 + dynState_.scissor.height;
+					for (const StvSomSub &q : stvSubs) {
+						const int x1 = std::max(q.x1, gx1), y1 = std::max(q.y1, gy1), x2 = std::min(q.x2, gx2), y2 = std::min(q.y2, gy2);
+						if (x2 <= x1 || y2 <= y1) continue;
+						renderManager->SetScissor(x1, y1, x2 - x1, y2 - y1);
+						StvSombra::St().areaRecorte2 += (double)(x2 - x1) * (y2 - y1);
+						renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset + q.primero * sizeof(uint16_t), q.cuenta, 1);
+					}
+					gstate_c.Dirty(DIRTY_VIEWPORTSCISSOR_STATE);
+				} else {
+					renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, vertexCount, 1);
+				}
+			}
 		} else {
 			StvDescribirPrimerDraw(renderManager, (int)prim, vertexCount, true);
-			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(vertexCount, pipelineKey_, (int)prim) && !StvDrawInfo(vertexCount, pipelineKey_, (int)prim))
+			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(vertexCount, pipelineKey_, (int)prim) && !StvDrawInfo(vertexCount, pipelineKey_, (int)prim) && !stvSomSaltar)
 			renderManager->Draw(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, vertexCount);
 		}
 		if (useDepthRaster_) {
@@ -732,6 +1213,7 @@ void DrawEngineVulkan::Flush() {
 			// decIndex_ here is always equal to inds currently, but it may not be in the future.
 			swTransform.BuildDrawingParams(prim, vertexCount, swDec->VertexType(), inds, RemainingIndices(inds), numDecodedVerts_, VERTEX_BUFFER_MAX, &result);
 		}
+		StvSomThrough(result, result.action == SW_CLEAR, prim, inds, vertexCount);  // STV_SOMBRA_RECORTE_v1
 
 		if (result.setSafeSize)
 			framebufferManager_->SetSafeSize(result.safeWidth, result.safeHeight);
@@ -871,7 +1353,10 @@ void DrawEngineVulkan::Flush() {
 					}
 				}
 			}
-			if (!StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) && !StvClasif(result.drawNumTrans, pipelineKey_, (int)prim) && !StvDrawInfo(result.drawNumTrans, pipelineKey_, (int)prim))
+			stvDiTV = result.drawBuffer; stvDiTVn = numDecodedVerts_;  // STVDI3
+			const bool stvSaltear = StvFsBits(stvUltimoFs, pipelineState_.blendState.blendEnabled) || StvClasif(result.drawNumTrans, pipelineKey_, (int)prim) || StvDrawInfo(result.drawNumTrans, pipelineKey_, (int)prim) || StvDrawNulo();  // STV_DRAW_NULO_v1
+			stvDiTV = nullptr; stvDiTVn = 0;
+			if (!stvSaltear)
 			renderManager->DrawIndexed(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, ibuf, ibOffset, result.drawNumTrans, 1);
 		} else if (result.action == SW_CLEAR) {
 			// Note: we won't get here if the clear is alpha but not color, or color but not alpha.

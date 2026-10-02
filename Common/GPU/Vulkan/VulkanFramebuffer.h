@@ -91,6 +91,7 @@ public:
 	int stvSucio[4] = { 0, 0, 0, 0 };
 	bool stvSucioHay = false;
 	void StvMarcar(int x1, int y1, int x2, int y2) {
+		StvMarcarAlias(x1, y1, x2, y2);  // STV_REINTERP_PARCIAL_v1
 		x1 = std::max(x1, 0); y1 = std::max(y1, 0); x2 = std::min(x2, width); y2 = std::min(y2, height);
 		if (x2 <= x1 || y2 <= y1) return;
 		if (!stvSucioHay) { stvSucio[0] = x1; stvSucio[1] = y1; stvSucio[2] = x2; stvSucio[3] = y2; stvSucioHay = true; return; }
@@ -98,6 +99,18 @@ public:
 		stvSucio[2] = std::max(stvSucio[2], x2); stvSucio[3] = std::max(stvSucio[3], y2);
 	}
 	void StvMarcarTodo() { StvMarcar(0, 0, width, height); }
+	// STV_REINTERP_PARCIAL_v1: otro rectangulo sucio, solo para el par de alias (misma memoria en otro
+	// formato): lo escrito desde la ultima reinterpretacion con la pareja.
+	int stvAlias[4] = { 0, 0, 0, 0 };
+	bool stvAliasHay = false;
+	VKRFramebuffer *stvAliasPar = nullptr;
+	void StvMarcarAlias(int x1, int y1, int x2, int y2) {
+		x1 = std::max(x1, 0); y1 = std::max(y1, 0); x2 = std::min(x2, width); y2 = std::min(y2, height);
+		if (x2 <= x1 || y2 <= y1) return;
+		if (!stvAliasHay) { stvAlias[0] = x1; stvAlias[1] = y1; stvAlias[2] = x2; stvAlias[3] = y2; stvAliasHay = true; return; }
+		stvAlias[0] = std::min(stvAlias[0], x1); stvAlias[1] = std::min(stvAlias[1], y1);
+		stvAlias[2] = std::max(stvAlias[2], x2); stvAlias[3] = std::max(stvAlias[3], y2);
+	}
 
 	VkImageView GetRTView() {
 		if (sampleCount == VK_SAMPLE_COUNT_1_BIT) {

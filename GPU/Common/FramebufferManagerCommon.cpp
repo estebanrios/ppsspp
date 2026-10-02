@@ -1038,9 +1038,38 @@ void FramebufferManagerCommon::CopyToColorFromOverlappingFramebuffers(VirtualFra
 			
 			if (pipeline) {
 				tookActions = true;
-				// OK we have the pipeline, now just do the blit.
-				BlitUsingRaster(src->fbo, 0.0f, 0.0f, srcWidth, srcHeight,
-					dst->fbo, dstX1, dstY1, dstX2, dstY2, false, dst->renderScaleFactor, pipeline, pass_name);
+				// STV_REINTERP_PARCIAL_v1 (arco GoS 1:1 STV, 2026-10-02): Ghost of Sparta escribe el mismo bloque
+				// en 8888 (un borrado) y en 565 (las siluetas del mapa de sombras) en cada cuadro, y cada cambio de
+				// formato reinterpretaba el framebuffer ENTERO (~0,3 ms por cuadro en dos pases). Si src y dst son
+				// pareja de alias ya sincronizada y dst no se escribio desde entonces, dst == reinterpretar(src) salvo
+				// en lo que src escribio desde la sincronizacion: se copia solo eso, con la MISMA correspondencia
+				// texel-pixel que la copia entera (solo 16<->32 bits a escala 1x, sin desplazamientos: entera).
+				static int stvParcial = -1;
+				if (stvParcial < 0) stvParcial = StvPropDef("debug.stv.reinterp", 1);
+				int r[4];
+				const bool parcialOk = stvParcial >= 1 && scaleFactorX != 1.0f && src->renderScaleFactor == 1.0f && dst->renderScaleFactor == 1.0f &&
+					source.xOffset == 0 && source.yOffset == 0 && src->fbo && dst->fbo && draw_->StvAliasParcial(src->fbo, dst->fbo, r);
+				static int nP = 0, nV = 0, nC = 0;
+				if (parcialOk) {
+					if (r[2] > r[0] && r[3] > r[1]) {
+						// alinear x a la relacion de pixeles (565->8888: pares de 565 hacen un 8888)
+						const int al = scaleFactorX < 1.0f ? (int)(1.0f / scaleFactorX + 0.5f) : 1;
+						const int sx1 = (r[0] / al) * al, sx2 = std::min(((r[2] + al - 1) / al) * al, (int)srcWidth);
+						const int sy1 = r[1], sy2 = std::min(r[3], (int)srcHeight);
+						if (sx2 > sx1 && sy2 > sy1)
+							BlitUsingRaster(src->fbo, (float)sx1, (float)sy1, (float)sx2, (float)sy2,
+								dst->fbo, sx1 * scaleFactorX, (float)sy1, sx2 * scaleFactorX, (float)sy2, false, dst->renderScaleFactor, pipeline, pass_name);
+						nP++;
+					} else {
+						nV++;   // nada escrito desde la sincronizacion: no hay que copiar nada
+					}
+				} else {
+					BlitUsingRaster(src->fbo, 0.0f, 0.0f, srcWidth, srcHeight,
+						dst->fbo, dstX1, dstY1, dstX2, dstY2, false, dst->renderScaleFactor, pipeline, pass_name);
+					nC++;
+				}
+				if (stvParcial >= 1 && scaleFactorX != 1.0f && src->fbo && dst->fbo) draw_->StvAliasSincronizado(src->fbo, dst->fbo);
+				if (stvParcial >= 2 && (nP + nV + nC) % 600 == 1) STV_LOG("STVREINTERP: parciales=%d vacias=%d enteras=%d", nP, nV, nC);
 			}
 
 			if (scaleFactorX == 1.0f && dst->z_address == src->z_address && dst->z_stride == src->z_stride) {
@@ -2279,6 +2308,7 @@ static const CopyCandidate *GetBestCopyCandidate(const TinySet<CopyCandidate, 4>
 // about what underlying framebuffer is the most likely to be the relevant ones. For src, we can probably prioritize recent
 // ones. For dst, less clear.
 bool FramebufferManagerCommon::NotifyFramebufferCopy(u32 src, u32 dst, int size, GPUCopyFlag flags, u32 skipDrawReason) {
+	StvVramEscrita(dst, (unsigned)std::max(size, 0));  // STV_SOMBRA_RECORTE_v1
 	if (size == 0) {
 		return false;
 	}
@@ -2919,6 +2949,7 @@ void FramebufferManagerCommon::ApplyClearToMemory(int x1, int y1, int x2, int y2
 }
 
 bool FramebufferManagerCommon::NotifyBlockTransferBefore(u32 dstBasePtr, int dstStride, int dstX, int dstY, u32 srcBasePtr, int srcStride, int srcX, int srcY, int width, int height, int bpp, u32 skipDrawReason) {
+	StvVramEscrita(dstBasePtr + (u32)((dstY * dstStride + dstX) * bpp), (unsigned)(std::max(height, 1) * dstStride * bpp));  // STV_SOMBRA_RECORTE_v1
 	stvBusq_.armado = false;   // STV(aft): solo lo arma la salida de :2796
 	if (!useBufferedRendering_) {
 		return false;

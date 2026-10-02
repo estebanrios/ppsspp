@@ -286,9 +286,14 @@ bool GenerateVertexShader(const VShaderID &id, char *buffer, const ShaderLanguag
 		// STV fp16=2: varyings de textura y niebla en mediump (experimento; Mali interpola
 		// una varying highp al doble de costo). Se lee al generar el shader.
 		const char *stvPrec = StvPropInt("debug.stv.fp16") >= 2 ? "mediump" : "highp";
-		WRITE(p, "layout (location = 0) out %s vec3 v_texcoord;\n", stvPrec);
-
-		WRITE(p, "layout (location = 3) out %s float v_fogdepth;\n", stvPrec);
+		if (StvVaryPack()) {
+			// STV_VARY_PACK_v1: textura (xyz) y niebla (w) en UNA varying vec4: el Mali-G57 interpola por
+			// slot y la niebla sola ocupaba uno entero. Misma precision (fp32), mismo resultado.
+			WRITE(p, "layout (location = 0) out %s vec4 v_tf;\n#define v_texcoord v_tf.xyz\n#define v_fogdepth v_tf.w\n", stvPrec);
+		} else {
+			WRITE(p, "layout (location = 0) out %s vec3 v_texcoord;\n", stvPrec);
+			WRITE(p, "layout (location = 3) out %s float v_fogdepth;\n", stvPrec);
+		}
 
 		WRITE(p, "invariant gl_Position;\n");
 	} else if (compat.shaderLanguage == HLSL_D3D11) {

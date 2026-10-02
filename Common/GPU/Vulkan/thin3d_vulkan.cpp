@@ -560,6 +560,8 @@ public:
 	bool StvSucioSoportado() const override { return true; }
 	bool StvSucio(Framebuffer *fb, int r[4]) override;
 	void StvSucioLimpiar(Framebuffer *fb) override;
+	bool StvAliasParcial(Framebuffer *src, Framebuffer *dst, int r[4]) override;
+	void StvAliasSincronizado(Framebuffer *src, Framebuffer *dst) override;
 
 	void HandleEvent(Event ev, int width, int height, void *param1, void *param2) override;
 
@@ -1812,6 +1814,8 @@ public:
 	}
 	~VKFramebuffer() {
 		_assert_msg_(buf_, "Null buf_ in VKFramebuffer - double delete?");
+		// STV_REINTERP_PARCIAL_v1: romper la pareja de alias ANTES de encolar el borrado (en este mismo hilo)
+		if (buf_->stvAliasPar) { buf_->stvAliasPar->stvAliasPar = nullptr; buf_->stvAliasPar = nullptr; }
 		buf_->Vulkan()->Delete().QueueCallback([](VulkanContext *vulkan, void *fb) {
 			VKRFramebuffer *vfb = static_cast<VKRFramebuffer *>(fb);
 			delete vfb;
@@ -1969,6 +1973,26 @@ bool VKContext::StvSucio(Framebuffer *fb, int r[4]) {
 	if (!f || !f->stvSucioHay) return false;
 	for (int i = 0; i < 4; i++) r[i] = f->stvSucio[i];
 	return true;
+}
+
+bool VKContext::StvAliasParcial(Framebuffer *src, Framebuffer *dst, int r[4]) {
+	VKRFramebuffer *s = src ? ((VKFramebuffer *)src)->GetFB() : nullptr;
+	VKRFramebuffer *d = dst ? ((VKFramebuffer *)dst)->GetFB() : nullptr;
+	if (!s || !d || s->stvAliasPar != d || d->stvAliasPar != s || d->stvAliasHay) return false;
+	if (!s->stvAliasHay) { r[0] = r[1] = r[2] = r[3] = 0; return true; }
+	for (int i = 0; i < 4; i++) r[i] = s->stvAlias[i];
+	return true;
+}
+
+void VKContext::StvAliasSincronizado(Framebuffer *src, Framebuffer *dst) {
+	VKRFramebuffer *s = src ? ((VKFramebuffer *)src)->GetFB() : nullptr;
+	VKRFramebuffer *d = dst ? ((VKFramebuffer *)dst)->GetFB() : nullptr;
+	if (!s || !d) return;
+	// cualquier pareja anterior de cualquiera de los dos queda rota
+	if (s->stvAliasPar && s->stvAliasPar != d) s->stvAliasPar->stvAliasPar = nullptr;
+	if (d->stvAliasPar && d->stvAliasPar != s) d->stvAliasPar->stvAliasPar = nullptr;
+	s->stvAliasPar = d; d->stvAliasPar = s;
+	s->stvAliasHay = false; d->stvAliasHay = false;
 }
 
 void VKContext::StvSucioLimpiar(Framebuffer *fb) {

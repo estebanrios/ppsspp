@@ -820,6 +820,10 @@ public:
 	virtual bool StvSucioSoportado() const { return false; }
 	virtual bool StvSucio(Framebuffer *fb, int r[4]) { return false; }
 	virtual void StvSucioLimpiar(Framebuffer *fb) {}
+	// STV_REINTERP_PARCIAL_v1: si src y dst son pareja de alias sincronizada y dst no se escribio desde
+	// entonces, devuelve true y el rectangulo de src escrito desde la sincronizacion (vacio: r[2] <= r[0]).
+	virtual bool StvAliasParcial(Framebuffer *src, Framebuffer *dst, int r[4]) { return false; }
+	virtual void StvAliasSincronizado(Framebuffer *src, Framebuffer *dst) {}
 
 	// Dynamic state
 	virtual void SetScissorRect(int left, int top, int width, int height) = 0;

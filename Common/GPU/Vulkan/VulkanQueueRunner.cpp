@@ -300,6 +300,26 @@ void VulkanQueueRunner::PreprocessSteps(std::vector<VKRStep *> &steps) {
 		}
 	}
 
+	// STV_DSLOAD_v1 (instrumento, arco GoS 1:1 STV 2026-10-02): techo de NO recargar depth/stencil al
+	// reabrir un framebuffer en el mismo cuadro (la reentrada). En la Mali la recarga de D/S es un
+	// sombreador de precarga que escribe profundidad: pasa por el test tardio a pantalla entera.
+	// debug.stv.dsload=1: depth/stencil KEEP -> DONT_CARE en todo paso que reabre un FB ya dibujado
+	// en este cuadro. ROMPE el test de stencil de esos pasos: solo mide.
+	{
+		static int stvDsl = -1;
+		if (stvDsl < 0) { stvDsl = StvPropInt("debug.stv.dsload"); STV_LOG("STVDSLOAD: modo=%d", stvDsl); }
+		if (stvDsl == 1) {
+			for (int i = 0; i < (int)steps.size(); i++) {
+				if (steps[i]->stepType != VKRStepType::RENDER || !steps[i]->render.framebuffer) continue;
+				if (steps[i]->render.depthLoad != VKRRenderPassLoadAction::KEEP && steps[i]->render.stencilLoad != VKRRenderPassLoadAction::KEEP) continue;
+				bool antes = false;
+				for (int j = 0; j < i && !antes; j++)
+					if (steps[j]->stepType == VKRStepType::RENDER && steps[j]->render.framebuffer == steps[i]->render.framebuffer) antes = true;
+				if (antes) { steps[i]->render.depthLoad = VKRRenderPassLoadAction::DONT_CARE; steps[i]->render.stencilLoad = VKRRenderPassLoadAction::DONT_CARE; }
+			}
+		}
+	}
+
 	// STV (dcload): pases cuyo primer draw es opaco y cubre todo: el color anterior
 	// no hace falta cargarlo. 1 = solo contar, 2 = aplicar (colorLoad DONT_CARE).
 	{

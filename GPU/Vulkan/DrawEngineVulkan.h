@@ -158,6 +158,12 @@ private:
 	void Invalidate(InvalidationCallbackFlags flags);
 
 	void ApplyDrawStateLate(VulkanRenderManager *renderManager, bool applyStencilRef, uint8_t stencilRef, bool useBlendConstant);
+	// STV_SOMBRA_RECORTE_v1 (ver GPU/Vulkan/StvSombraRecorte.h)
+	int StvSomClasificarHW();
+	void StvSomSilueta(GEPrimitiveType prim, int vertexCount, bool useElements, class VulkanRenderManager *rm);
+	struct StvSomSub { int primero, cuenta, x1, y1, x2, y2; };
+	bool StvSomProyeccion(GEPrimitiveType prim, int vertexCount, bool useElements, int *sx1, int *sy1, int *sx2, int *sy2, std::vector<StvSomSub> *subs);
+	void StvSomThrough(const struct SoftwareTransformResult &result, bool esClear, GEPrimitiveType prim, const u16 *inds, int nInds);
 	void ConvertStateToVulkanKey(FramebufferManagerVulkan &fbManager, ShaderManagerVulkan *shaderManager, int prim, VulkanPipelineRasterStateKey &key, VulkanDynamicState &dynState);
 	void BindShaderBlendTex();
 

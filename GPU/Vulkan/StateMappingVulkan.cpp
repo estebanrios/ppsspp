@@ -288,6 +288,18 @@ void DrawEngineVulkan::ConvertStateToVulkanKey(FramebufferManagerVulkan &fbManag
 				key.depthCompareOp = VK_COMPARE_OP_ALWAYS;
 			}
 
+			// STV_STALW_v1 (instrumento, arco GoS 1:1 STV): debug.stv.stalw=1 -> test de stencil ALWAYS
+			// (sigue usando D/S), =2 -> sin test de stencil (el pase puede quedar solo con color), en draws
+			// through que solo PRUEBAN stencil (ops KEEP). Mide el costo de cargar D/S en la reentrada.
+			{
+				static int stalw = 0, nStalw = 0;
+				if ((nStalw++ & 255) == 0) stalw = StvPropInt("debug.stv.stalw");   // cacheada: esto corre en cada cambio de estado
+				if (stalw > 0 && stencilState.enabled && gstate.isModeThrough() && StvAbActivo() &&
+					stencilState.sFail == GE_STENCILOP_KEEP && stencilState.zFail == GE_STENCILOP_KEEP && stencilState.zPass == GE_STENCILOP_KEEP) {
+					if (stalw == 1) stencilState.testFunc = GE_COMP_ALWAYS;
+					else stencilState.enabled = false;
+				}
+			}
 			// Stencil Test
 			if (stencilState.enabled) {
 				key.stencilTestEnable = true;

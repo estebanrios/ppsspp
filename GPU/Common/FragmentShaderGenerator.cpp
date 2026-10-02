@@ -254,9 +254,14 @@ bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLangu
 		if (lmode) {
 			WRITE(p, "layout (location = 2) %s in lowp vec3 v_color1;\n", shading);
 		}
+		if (StvVaryPack()) {
+			// STV_VARY_PACK_v1 (ver VertexShaderGenerator): textura y niebla en una sola vec4
+			WRITE(p, "layout (location = 0) in %s vec4 v_tf;\n#define v_texcoord v_tf.xyz\n#define v_fogdepth v_tf.w\n", StvPropInt("debug.stv.fp16") >= 2 ? "mediump" : "highp");
+		} else {
 		WRITE(p, "layout (location = 3) in %s float v_fogdepth;\n", StvPropInt("debug.stv.fp16") >= 2 ? "mediump" : "highp");   // STV fp16=2: varyings en mediump (experimento)
 		if (doTexture) {
 			WRITE(p, "layout (location = 0) in %s vec3 v_texcoord;\n", StvPropInt("debug.stv.fp16") >= 2 ? "mediump" : "highp");
+		}
 		}
 
 		if (enableAlphaTest && !alphaTestAgainstZero) {
