@@ -556,6 +556,10 @@ public:
 	std::vector<std::string> GetExtensionList(bool device, bool enabledOnly) const override;
 
 	uint64_t GetNativeObject(NativeObject obj, void *srcObject) override;
+	// STV_AUTOTEX_ALTERNA_v1
+	bool StvSucioSoportado() const override { return true; }
+	bool StvSucio(Framebuffer *fb, int r[4]) override;
+	void StvSucioLimpiar(Framebuffer *fb) override;
 
 	void HandleEvent(Event ev, int width, int height, void *param1, void *param2) override;
 
@@ -1958,6 +1962,18 @@ void VKContext::InvalidateFramebuffer(FBInvalidationStage stage, Aspect aspects)
 	} else if (stage == FB_INVALIDATION_STORE) {
 		renderManager_.SetStoreDontCare(flags);
 	}
+}
+
+bool VKContext::StvSucio(Framebuffer *fb, int r[4]) {
+	VKRFramebuffer *f = fb ? ((VKFramebuffer *)fb)->GetFB() : nullptr;
+	if (!f || !f->stvSucioHay) return false;
+	for (int i = 0; i < 4; i++) r[i] = f->stvSucio[i];
+	return true;
+}
+
+void VKContext::StvSucioLimpiar(Framebuffer *fb) {
+	VKRFramebuffer *f = fb ? ((VKFramebuffer *)fb)->GetFB() : nullptr;
+	if (f) f->stvSucioHay = false;
 }
 
 uint64_t VKContext::GetNativeObject(NativeObject obj, void *srcObject) {

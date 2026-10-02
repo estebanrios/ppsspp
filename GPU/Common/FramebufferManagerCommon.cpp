@@ -1087,9 +1087,18 @@ Draw2DPipeline *FramebufferManagerCommon::GetReinterpretPipeline(GEBufferFormat 
 	return pipeline;
 }
 
+void FramebufferManagerCommon::StvSoltarGemela(VirtualFramebuffer *v) {
+	if (v->stvGemela && v->stvGemela != v->fbo)
+		v->stvGemela->Release();
+	v->stvGemela = nullptr;
+	v->stvGemelaDe = nullptr;
+	v->stvGemelaLista = false;
+}
+
 void FramebufferManagerCommon::DestroyFramebuf(VirtualFramebuffer *v) {
 	// Notify the texture cache of both the color and depth buffers.
 	textureCache_->NotifyFramebuffer(v, NOTIFY_FB_DESTROYED);
+	StvSoltarGemela(v);  // STV_AUTOTEX_ALTERNA_v1
 	if (v->fbo) {
 		v->fbo->Release();
 		v->fbo = nullptr;
@@ -1429,12 +1438,89 @@ bool FramebufferManagerCommon::BindFramebufferAsColorTexture(int stage, VirtualF
 			return true;
 		}
 
+		// STV_AUTOTEX_ALTERNA_v1 (arco GoS 1:1 STV, 2026-10-02): autotextura SIN copia. En la Mali cada
+		// copia de autotextura es un paso de GPU con su vaciado (~2 trabajos de fragmentos): en el bloom
+		// de Ghost of Sparta son 6 por cuadro y la GPU queda parada ~0,4 ms. En vez de copiar la region
+		// que se va a leer, el pase sigue en una imagen GEMELA: primero se le recompone lo que le falta
+		// (lo escrito en la imagen actual desde la ultima vez, rectangulo que lleva el render manager)
+		// con un dibujo 1:1 dentro del mismo pase, y el draw del juego lee la imagen anterior, que ya no
+		// es destino. Legal en Vulkan y exacto: la gemela termina con el mismo contenido. Solo color
+		// sin depth en uso, sin MSAA, una sola capa. debug.stv.alterna: 1 = activo (defecto desde f116), 0 = copia
+		// como antes, 2 = diagnostico (recompone el buffer entero en cada intercambio). Validado: GoS identico al
+		// bit a copiar el buffer entero, Dante identico al bit, GoW/GTA/Spider-Man/Tekken sin regresion.
+		{
+			static int stvAlterna = -1;
+			if (stvAlterna < 0) stvAlterna = StvPropDef("debug.stv.alterna", 1);
+			{
+				static int avisos = 0;
+				if (stvAlterna >= 1 && avisos < 6) {
+					avisos++;
+					STV_LOG("STVALTERNA candidato %08x: soporte=%d fbo=%d capa=%d msaa=%d usage=%x", framebuffer->fb_address, (int)draw_->StvSucioSoportado(),
+						framebuffer->fbo ? 1 : 0, layer, framebuffer->fbo ? framebuffer->fbo->MultiSampleLevel() : -1, (unsigned)framebuffer->usageFlags);
+				}
+			}
+			if (stvAlterna >= 1 && draw_->StvSucioSoportado() && framebuffer->fbo && (layer == 0 || layer == -1) && framebuffer->fbo->Layers() == 1 &&
+				framebuffer->fbo->MultiSampleLevel() == 0 && !(framebuffer->usageFlags & FB_USAGE_RENDER_DEPTH)) {
+				int stvR[4];
+				if (stvAlternaPaso_ == framebuffer && framebuffer->stvGemela && framebuffer->stvGemelaLista && !draw_->StvSucio(framebuffer->fbo, stvR)) {
+					// Ya se alterno y desde entonces no se escribio nada: la gemela tiene el mismo contenido.
+					// (Si se escribio, hay que alternar de nuevo: la copia original cortaba el pase y la lectura
+					// veia esos draws. Saltear eso daba 0,17 % de pixeles distintos en el bloom de GoS.)
+					draw_->BindFramebufferAsTexture(framebuffer->stvGemela, stage, Draw::Aspect::COLOR_BIT, layer);
+					return true;
+				}
+				Draw::Framebuffer *a = framebuffer->fbo;
+				if (framebuffer->stvGemela && (framebuffer->stvGemelaDe != a || framebuffer->stvGemela->Width() != a->Width() || framebuffer->stvGemela->Height() != a->Height()))
+					StvSoltarGemela(framebuffer);
+				if (!framebuffer->stvGemela) {
+					char tag[160];
+					snprintf(tag, sizeof(tag), "%s_gemela", a->Tag());
+					framebuffer->stvGemela = draw_->CreateFramebuffer({ a->Width(), a->Height(), 1, a->Layers(), 0, true, tag });
+					framebuffer->stvGemelaLista = false;
+				}
+				Draw::Framebuffer *b = framebuffer->stvGemela;
+				if (b) {
+					int r[4] = { 0, 0, a->Width(), a->Height() };
+					bool hay = draw_->StvSucio(a, r);
+					if (!framebuffer->stvGemelaLista || stvAlterna >= 2) { r[0] = 0; r[1] = 0; r[2] = a->Width(); r[3] = a->Height(); hay = true; }  // 2 = diagnostico: todo
+					draw_->BindFramebufferAsRenderTarget(b, { Draw::RPAction::KEEP, Draw::RPAction::KEEP, Draw::RPAction::KEEP }, "STVAlterna");
+					if (hay) {
+						BlitUsingRaster(a, (float)r[0], (float)r[1], (float)r[2], (float)r[3], b, (float)r[0], (float)r[1], (float)r[2], (float)r[3],
+							false, framebuffer->renderScaleFactor, Get2DPipeline(DRAW2D_COPY_COLOR), "STVAlternaSync");
+					}
+					draw_->Invalidate(InvalidationFlags::CACHED_RENDER_STATE);  // como RebindFramebuffer
+					shaderManager_->DirtyLastShader();
+					draw_->StvSucioLimpiar(a);
+					draw_->StvSucioLimpiar(b);
+					framebuffer->fbo = b;
+					framebuffer->stvGemela = a;
+					framebuffer->stvGemelaDe = b;
+					framebuffer->stvGemelaLista = true;
+					stvAlternaPaso_ = framebuffer;
+					draw_->BindFramebufferAsTexture(a, stage, Draw::Aspect::COLOR_BIT, layer);
+					gpuStats.numCopiesForSelfTex++;
+					{
+						static int n = 0;
+						if ((++n % 600) == 1)
+							STV_LOG("STVALTERNA: %08x %dx%d sync %d,%d-%d,%d (%s)", framebuffer->fb_address, a->Width(), a->Height(), r[0], r[1], r[2], r[3], hay ? "con dibujo" : "nada que recomponer");
+					}
+					return true;
+				}
+			}
+		}
 		Draw::Framebuffer *renderCopy = GetTempFBO(TempFBO::COPY, framebuffer->renderWidth, framebuffer->renderHeight);
 		// STV_NOCOPY_v1 (instrumento, arco GoS 1:1 STV): debug.stv.nocopy=1 NO copia (se samplea la copia
 		// vieja): mide cuanto cuestan las copias de autotextura y los cortes de pase. Rompe la imagen.
 		static int stvNoCopy = -1;
 		if (stvNoCopy < 0) stvNoCopy = StvPropInt("debug.stv.nocopy");
 		if (renderCopy && stvNoCopy == 1) {
+			draw_->BindFramebufferAsTexture(renderCopy, stage, Draw::Aspect::COLOR_BIT, layer);
+			return true;
+		}
+		if (renderCopy && stvNoCopy == 2) {   // sin copia pero con el corte de pase: separa los dos costos
+			// Un paso vacio KEEP sobre la temporal (el ejecutor lo saltea) obliga a cerrar el pase actual.
+			draw_->BindFramebufferAsRenderTarget(renderCopy, { Draw::RPAction::KEEP, Draw::RPAction::KEEP, Draw::RPAction::KEEP }, "STVNoCopyCorte");
+			RebindFramebuffer("After BindFramebufferAsColorTexture");
 			draw_->BindFramebufferAsTexture(renderCopy, stage, Draw::Aspect::COLOR_BIT, layer);
 			return true;
 		}
@@ -1485,7 +1571,11 @@ void FramebufferManagerCommon::CopyFramebufferForColorTexture(VirtualFramebuffer
 	// If max is not > min, we probably could not detect it.  Skip.
 	// See the vertex decoder, where this is updated.
 	// TODO: We're currently not hitting this path in Dante. See #17032
-	if ((flags & BINDFBCOLOR_MAY_COPY_WITH_UV) == BINDFBCOLOR_MAY_COPY_WITH_UV && gstate_c.vertBounds.maxU > gstate_c.vertBounds.minU) {
+	// STV: debug.stv.selfcopy=9 = referencia: copia del framebuffer ENTERO, sin recorte por UV ni por
+	// sub-region (para comparar al bit contra STV_AUTOTEX_ALTERNA_v1, que lee el contenido real completo).
+	static int stvCopiaEntera = -1;
+	if (stvCopiaEntera < 0) stvCopiaEntera = (StvPropDef("debug.stv.selfcopy", 2) == 9) ? 1 : 0;
+	if (!stvCopiaEntera && (flags & BINDFBCOLOR_MAY_COPY_WITH_UV) == BINDFBCOLOR_MAY_COPY_WITH_UV && gstate_c.vertBounds.maxU > gstate_c.vertBounds.minU) {
 		x = std::max(gstate_c.vertBounds.minU, (u16)0);
 		y = std::max(gstate_c.vertBounds.minV, (u16)0);
 		w = std::min(gstate_c.vertBounds.maxU, src->drawnWidth) - x;
@@ -1512,7 +1602,7 @@ void FramebufferManagerCommon::CopyFramebufferForColorTexture(VirtualFramebuffer
 	{
 		static int stvRect = -1;
 		if (stvRect < 0) stvRect = StvPropDef("debug.stv.selfcopy", 2);
-		if (stvRect >= 1 && !(*partial) && x == 0 && y == 0 && w == src->drawnWidth && h == src->drawnHeight &&
+		if (stvRect >= 1 && stvRect != 9 && !(*partial) && x == 0 && y == 0 && w == src->drawnWidth && h == src->drawnHeight &&
 			(flags & BINDFBCOLOR_APPLY_TEX_OFFSET) && (int)gstate.getTextureFormat() <= 3 &&
 			(int)gstate.getTextureFormat() == (int)src->fb_format) {
 			int tw = gstate.getTextureWidth(0), th = gstate.getTextureHeight(0);
@@ -3830,6 +3920,16 @@ void FramebufferManagerCommon::BlitFramebuffer(VirtualFramebuffer *dst, int dstX
 
 	bool useBlit = channel == RASTER_COLOR ? draw_->GetDeviceCaps().framebufferBlitSupported : false;
 	bool useCopy = channel == RASTER_COLOR ? draw_->GetDeviceCaps().framebufferCopySupported : false;
+	// STV_COPIARASTER_v1 (instrumento): debug.stv.copiaraster=1 hace por raster SOLO las copias de
+	// autotextura (CopyFBForColorTexture): en la Mali cada vkCmdCopyImage cuesta ~4 trabajos de fragmentos.
+	{
+		static int stvCr = -1;
+		if (stvCr < 0) stvCr = StvPropInt("debug.stv.copiaraster");
+		if (stvCr == 1 && tag && !strcmp(tag, "CopyFBForColorTexture")) {
+			useBlit = false;
+			useCopy = false;
+		}
+	}
 	if (src != dst && (dst == currentRenderVfb_ || dst->fbo->MultiSampleLevel() != 0 || src->fbo->MultiSampleLevel() != 0)) {
 		// If already bound, using either a blit or a copy is unlikely to be an optimization.
 		// So we're gonna use a raster draw instead. Also multisampling has problems with copies currently.

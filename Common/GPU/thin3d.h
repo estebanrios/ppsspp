@@ -815,6 +815,11 @@ public:
 	// In Vulkan, this sets the LOAD_OP or the STORE_OP (depending on stage) of the current render pass instance to DONT_CARE.
 	// channels is a bitwise combination of Aspect::COLOR, DEPTH and STENCIL.
 	virtual void InvalidateFramebuffer(FBInvalidationStage stage, Aspect aspects) {}
+	// STV_AUTOTEX_ALTERNA_v1: rectangulo de color escrito en un framebuffer desde la ultima limpieza
+	// (pixeles x1,y1,x2,y2). Solo Vulkan lo lleva; sin soporte devuelve false y el llamador no alterna.
+	virtual bool StvSucioSoportado() const { return false; }
+	virtual bool StvSucio(Framebuffer *fb, int r[4]) { return false; }
+	virtual void StvSucioLimpiar(Framebuffer *fb) {}
 
 	// Dynamic state
 	virtual void SetScissorRect(int left, int top, int width, int height) = 0;

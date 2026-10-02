@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 #include "Common/Common.h"
 #include "Common/GPU/Vulkan/VulkanContext.h"
 
@@ -84,6 +86,18 @@ public:
 	bool HasDepth() const {
 		return depth.image != VK_NULL_HANDLE;
 	}
+
+	// STV_AUTOTEX_ALTERNA_v1: union de lo escrito en el color desde la ultima limpieza (pixeles).
+	int stvSucio[4] = { 0, 0, 0, 0 };
+	bool stvSucioHay = false;
+	void StvMarcar(int x1, int y1, int x2, int y2) {
+		x1 = std::max(x1, 0); y1 = std::max(y1, 0); x2 = std::min(x2, width); y2 = std::min(y2, height);
+		if (x2 <= x1 || y2 <= y1) return;
+		if (!stvSucioHay) { stvSucio[0] = x1; stvSucio[1] = y1; stvSucio[2] = x2; stvSucio[3] = y2; stvSucioHay = true; return; }
+		stvSucio[0] = std::min(stvSucio[0], x1); stvSucio[1] = std::min(stvSucio[1], y1);
+		stvSucio[2] = std::max(stvSucio[2], x2); stvSucio[3] = std::max(stvSucio[3], y2);
+	}
+	void StvMarcarTodo() { StvMarcar(0, 0, width, height); }
 
 	VkImageView GetRTView() {
 		if (sampleCount == VK_SAMPLE_COUNT_1_BIT) {

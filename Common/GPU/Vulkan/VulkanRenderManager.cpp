@@ -1079,6 +1079,8 @@ void VulkanRenderManager::EndCurRenderStep() {
 
 void VulkanRenderManager::BindFramebufferAsRenderTarget(VKRFramebuffer *fb, VKRRenderPassLoadAction colorLoad, VKRRenderPassLoadAction depthLoad, VKRRenderPassLoadAction stencilLoad, uint32_t clearColor, float clearDepth, uint8_t clearStencil, const char *tag) {
 	_dbg_assert_(insideFrame_);
+	if (fb && colorLoad != VKRRenderPassLoadAction::KEEP)
+		fb->StvMarcarTodo();  // STV_AUTOTEX_ALTERNA_v1: CLEAR o DONT_CARE cambian todo el color
 
 	if (!fb) {
 		// Backbuffer render passes have some requirements.
@@ -1399,6 +1401,8 @@ void VulkanRenderManager::Clear(uint32_t clearColor, float clearZ, int clearSten
 	_dbg_assert_(curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER);
 	if (!clearMask)
 		return;
+	if ((clearMask & VK_IMAGE_ASPECT_COLOR_BIT) && curRenderStep_->render.framebuffer)
+		curRenderStep_->render.framebuffer->StvMarcarTodo();  // STV_AUTOTEX_ALTERNA_v1
 
 	// If this is the first drawing command or clears everything, merge it into the pass.
 	int allAspects = VK_IMAGE_ASPECT_COLOR_BIT | VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
@@ -1434,6 +1438,7 @@ void VulkanRenderManager::Clear(uint32_t clearColor, float clearZ, int clearSten
 }
 
 void VulkanRenderManager::CopyFramebuffer(VKRFramebuffer *src, VkRect2D srcRect, VKRFramebuffer *dst, VkOffset2D dstPos, VkImageAspectFlags aspectMask, const char *tag) {
+	if (dst && (aspectMask & VK_IMAGE_ASPECT_COLOR_BIT)) dst->StvMarcarTodo();  // STV_AUTOTEX_ALTERNA_v1
 #ifdef _DEBUG
 	SanityCheckPassesOnAdd();
 #endif
@@ -1515,6 +1520,7 @@ void VulkanRenderManager::CopyFramebuffer(VKRFramebuffer *src, VkRect2D srcRect,
 }
 
 void VulkanRenderManager::BlitFramebuffer(VKRFramebuffer *src, VkRect2D srcRect, VKRFramebuffer *dst, VkRect2D dstRect, VkImageAspectFlags aspectMask, VkFilter filter, const char *tag) {
+	if (dst && (aspectMask & VK_IMAGE_ASPECT_COLOR_BIT)) dst->StvMarcarTodo();  // STV_AUTOTEX_ALTERNA_v1
 #ifdef _DEBUG
 	SanityCheckPassesOnAdd();
 #endif

@@ -313,7 +313,11 @@ public:
 	// debug.stv.area: vacio/2 = area acotada al draw y alineada a 32 (defecto desde f27), 0 = como upstream.
 	static int StvModoArea() { static int m = -1; if (m < 0) m = StvPropDef("debug.stv.area", 2); return m; }
 	void StvAplicarAreaDraw() {
-		if (StvModoArea() < 2) { stvBboxPend_ = false; return; }
+		if (StvModoArea() < 2) {
+			stvBboxPend_ = false;
+			if (curRenderStep_ && curRenderStep_->render.framebuffer) curRenderStep_->render.framebuffer->StvMarcarTodo();  // STV_AUTOTEX_ALTERNA_v1
+			return;
+		}
 		// Sin scissor fijado en ESTE pase: el area es el framebuffer entero (como upstream).
 		VkRect2D r = curScissor_;
 		if (!curStepHasScissor_ || r.extent.width == 0 || r.extent.height == 0) {
@@ -329,6 +333,9 @@ public:
 			stvAreaAcotados_++;
 		}
 		curRenderArea_.Apply(r);
+		// STV_AUTOTEX_ALTERNA_v1: lo que este draw puede escribir en el color del destino.
+		if (curRenderStep_ && curRenderStep_->render.framebuffer)
+			curRenderStep_->render.framebuffer->StvMarcar(r.offset.x, r.offset.y, r.offset.x + (int)r.extent.width, r.offset.y + (int)r.extent.height);
 	}
 	uint32_t stvAreaAcotados_ = 0;
 	bool StvPasoSinDraws() const { return curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER && curRenderStep_->render.numDraws == 0; }

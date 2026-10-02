@@ -108,6 +108,11 @@ struct VirtualFramebuffer {
 	GEBufferFormat fb_format;
 
 	Draw::Framebuffer *fbo;
+	// STV_AUTOTEX_ALTERNA_v1: imagen gemela para la autotextura sin copia (se alternan fbo y gemela).
+	// stvGemelaDe = el fbo con el que esta emparejada; si fbo cambio por otro camino, se descarta.
+	Draw::Framebuffer *stvGemela;
+	Draw::Framebuffer *stvGemelaDe;
+	bool stvGemelaLista;
 
 	// width/height: The detected size of the current framebuffer, in original PSP pixels.
 	u16 width;
@@ -524,7 +529,9 @@ public:
 
 	void DiscardFramebufferCopy() {
 		currentFramebufferCopy_ = nullptr;
+		stvAlternaPaso_ = nullptr;  // STV_AUTOTEX_ALTERNA_v1: el intercambio vale para un pase
 	}
+	void StvSoltarGemela(VirtualFramebuffer *v);
 
 	bool PresentedThisFrame() const;
 
@@ -627,6 +634,7 @@ protected:
 	VirtualFramebuffer *currentRenderVfb_ = nullptr;
 
 	Draw::Framebuffer *currentFramebufferCopy_ = nullptr;
+	VirtualFramebuffer *stvAlternaPaso_ = nullptr;  // STV_AUTOTEX_ALTERNA_v1
 
 	// The range of PSP memory that may contain FBOs.  So we can skip iterating.
 	u32 framebufColorRangeEnd_ = 0;
