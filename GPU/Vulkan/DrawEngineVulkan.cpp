@@ -685,35 +685,115 @@ bool DrawEngineVulkan::StvSomProyeccion(GEPrimitiveType prim, int vertexCount, b
 	static std::vector<uint8_t> bloques;
 	bloques.assign((size_t)nbx * nby, 0);
 	bool hay = false;
-	std::vector<V7> pol;
-	for (int t = 0; t + 2 < vertexCount; t += 3) {
-		const V7 *tri[3] = { &vs[ind[t]], &vs[ind[t + 1]], &vs[ind[t + 2]] };
-		// rechazo rapido: con q > 0 en los 3 vertices, la caja (u/q, v/q) del triangulo contiene la de cualquier punto
-		bool qpos = tri[0]->q > 0 && tri[1]->q > 0 && tri[2]->q > 0;
-		float tu0 = 0, tu1 = 0, tv0 = 0, tv1 = 0;
-		if (qpos) {
-			tu0 = tu1 = tri[0]->u / tri[0]->q; tv0 = tv1 = tri[0]->v / tri[0]->q;
-			for (int k = 1; k < 3; k++) { const float u = tri[k]->u / tri[k]->q, v = tri[k]->v / tri[k]->q; tu0 = std::min(tu0, u); tu1 = std::max(tu1, u); tv0 = std::min(tv0, v); tv1 = std::max(tv1, v); }
+	// El recorte de f117 (vector por plano): sigue para sombra.alg=0 y como referencia de sombra.cmp=1.
+	auto bloquesF117 = [&](std::vector<uint8_t> &bl, bool &hy) {
+		std::vector<V7> pol;
+		for (int t = 0; t + 2 < vertexCount; t += 3) {
+			const V7 *tri[3] = { &vs[ind[t]], &vs[ind[t + 1]], &vs[ind[t + 2]] };
+			// rechazo rapido: con q > 0 en los 3 vertices, la caja (u/q, v/q) del triangulo contiene la de cualquier punto
+			bool qpos = tri[0]->q > 0 && tri[1]->q > 0 && tri[2]->q > 0;
+			float tu0 = 0, tu1 = 0, tv0 = 0, tv1 = 0;
+			if (qpos) {
+				tu0 = tu1 = tri[0]->u / tri[0]->q; tv0 = tv1 = tri[0]->v / tri[0]->q;
+				for (int k = 1; k < 3; k++) { const float u = tri[k]->u / tri[k]->q, v = tri[k]->v / tri[k]->q; tu0 = std::min(tu0, u); tu1 = std::max(tu1, u); tv0 = std::min(tv0, v); tv1 = std::max(tv1, v); }
+			}
+			for (const RU &r : rs) {
+				if (qpos && (tu1 < r.u0 || tu0 > r.u1 || tv1 < r.v0 || tv0 > r.v1)) continue;
+				for (int sgn = 0; sgn < 2; sgn++) {
+					if (qpos && sgn == 1) continue;
+					const float sg = sgn == 0 ? 1.0f : -1.0f;
+					pol.assign({ *tri[0], *tri[1], *tri[2] });
+					Recortar(pol, [](const V7 &v) { return v.W - 1e-4f; });
+					Recortar(pol, [&](const V7 &v) { return sg * v.q; });
+					if (std::isfinite(r.u0)) Recortar(pol, [&](const V7 &v) { return sg * (v.u - r.u0 * v.q); });
+					if (std::isfinite(r.u1)) Recortar(pol, [&](const V7 &v) { return sg * (r.u1 * v.q - v.u); });
+					if (std::isfinite(r.v0)) Recortar(pol, [&](const V7 &v) { return sg * (v.v - r.v0 * v.q); });
+					if (std::isfinite(r.v1)) Recortar(pol, [&](const V7 &v) { return sg * (r.v1 * v.q - v.v); });
+					if (pol.empty()) continue;
+					float x1 = 1e9f, y1 = 1e9f, x2 = -1e9f, y2 = -1e9f;
+					for (const V7 &v : pol) { const float x = v.X / v.W, y = v.Y / v.W; x1 = std::min(x1, x); y1 = std::min(y1, y); x2 = std::max(x2, x); y2 = std::max(y2, y); }
+					const int bx1 = std::max(0, (int)std::floor((x1 - 1.0f) / B)), bx2 = std::min(nbx - 1, (int)std::floor((x2 + 1.0f) / B));
+					const int by1 = std::max(0, (int)std::floor((y1 - 1.0f) / B)), by2 = std::min(nby - 1, (int)std::floor((y2 + 1.0f) / B));
+					for (int by = by1; by <= by2; by++) for (int bx = bx1; bx <= bx2; bx++) { bl[(size_t)by * nbx + bx] = 1; hy = true; }
+				}
+			}
 		}
-		for (const RU &r : rs) {
-			if (qpos && (tu1 < r.u0 || tu0 > r.u1 || tv1 < r.v0 || tv0 > r.v1)) continue;
-			for (int sgn = 0; sgn < 2; sgn++) {
+	};
+	if (Alg() == 0) {
+		bloquesF117(bloques, hay);
+	} else {
+		// STV_SOMBRA_SINHEAP_v1: los mismos bloques que el de f117, sin memoria dinamica y sin repetir trabajo.
+		//  - el polígono vive en un arreglo fijo (RecortarF, misma aritmetica que Recortar);
+		//  - los recortes por W y por el signo de q son los mismos para todas las tiras: se hacen una vez por signo
+		//    (el de f117 los repetia por tira con las mismas entradas: mismo resultado bit a bit);
+		//  - marcar es un OR: si todos los bloques que el triangulo PUEDE tocar (CajaTriangulo) ya estan marcados,
+		//    no puede agregar nada y se saltea; se vuelve a mirar cada vez que una tira marca un bloque nuevo.
+		bool desborde = false;
+		auto marcar = [&](const Poli &pol) {
+			float x1 = 1e9f, y1 = 1e9f, x2 = -1e9f, y2 = -1e9f;
+			for (int i = 0; i < pol.n; i++) { const float x = pol.v[i].X / pol.v[i].W, y = pol.v[i].Y / pol.v[i].W; x1 = std::min(x1, x); y1 = std::min(y1, y); x2 = std::max(x2, x); y2 = std::max(y2, y); }
+			const int bx1 = std::max(0, (int)std::floor((x1 - 1.0f) / B)), bx2 = std::min(nbx - 1, (int)std::floor((x2 + 1.0f) / B));
+			const int by1 = std::max(0, (int)std::floor((y1 - 1.0f) / B)), by2 = std::min(nby - 1, (int)std::floor((y2 + 1.0f) / B));
+			bool nuevo = false;
+			for (int by = by1; by <= by2; by++) for (int bx = bx1; bx <= bx2; bx++) {
+				uint8_t &b = bloques[(size_t)by * nbx + bx];
+				if (!b) { b = 1; nuevo = true; }
+				hay = true;
+			}
+			return nuevo;
+		};
+		auto todos = [&](const int cb[4]) {
+			for (int by = cb[1]; by <= cb[3]; by++) for (int bx = cb[0]; bx <= cb[2]; bx++) if (!bloques[(size_t)by * nbx + bx]) return false;
+			return true;
+		};
+		for (int t = 0; t + 2 < vertexCount && !desborde; t += 3) {
+			const V7 *tri[3] = { &vs[ind[t]], &vs[ind[t + 1]], &vs[ind[t + 2]] };
+			St().tri++;
+			bool qpos = tri[0]->q > 0 && tri[1]->q > 0 && tri[2]->q > 0;
+			float tu0 = 0, tu1 = 0, tv0 = 0, tv1 = 0;
+			if (qpos) {
+				tu0 = tu1 = tri[0]->u / tri[0]->q; tv0 = tv1 = tri[0]->v / tri[0]->q;
+				for (int k = 1; k < 3; k++) { const float u = tri[k]->u / tri[k]->q, v = tri[k]->v / tri[k]->q; tu0 = std::min(tu0, u); tu1 = std::max(tu1, u); tv0 = std::min(tv0, v); tv1 = std::max(tv1, v); }
+			}
+			int cb[4];
+			const bool caja = CajaTriangulo(tri, B, nbx, nby, cb);
+			if (caja && todos(cb)) { St().triSalto++; continue; }
+			bool lleno = false;
+			for (int sgn = 0; sgn < 2 && !lleno && !desborde; sgn++) {
 				if (qpos && sgn == 1) continue;
 				const float sg = sgn == 0 ? 1.0f : -1.0f;
-				pol.assign({ *tri[0], *tri[1], *tri[2] });
-				Recortar(pol, [](const V7 &v) { return v.W - 1e-4f; });
-				Recortar(pol, [&](const V7 &v) { return sg * v.q; });
-				if (std::isfinite(r.u0)) Recortar(pol, [&](const V7 &v) { return sg * (v.u - r.u0 * v.q); });
-				if (std::isfinite(r.u1)) Recortar(pol, [&](const V7 &v) { return sg * (r.u1 * v.q - v.u); });
-				if (std::isfinite(r.v0)) Recortar(pol, [&](const V7 &v) { return sg * (v.v - r.v0 * v.q); });
-				if (std::isfinite(r.v1)) Recortar(pol, [&](const V7 &v) { return sg * (r.v1 * v.q - v.v); });
-				if (pol.empty()) continue;
-				float x1 = 1e9f, y1 = 1e9f, x2 = -1e9f, y2 = -1e9f;
-				for (const V7 &v : pol) { const float x = v.X / v.W, y = v.Y / v.W; x1 = std::min(x1, x); y1 = std::min(y1, y); x2 = std::max(x2, x); y2 = std::max(y2, y); }
-				const int bx1 = std::max(0, (int)std::floor((x1 - 1.0f) / B)), bx2 = std::min(nbx - 1, (int)std::floor((x2 + 1.0f) / B));
-				const int by1 = std::max(0, (int)std::floor((y1 - 1.0f) / B)), by2 = std::min(nby - 1, (int)std::floor((y2 + 1.0f) / B));
-				for (int by = by1; by <= by2; by++) for (int bx = bx1; bx <= bx2; bx++) { bloques[(size_t)by * nbx + bx] = 1; hay = true; }
+				Poli base;
+				base.Tri(*tri[0], *tri[1], *tri[2]);
+				if (!RecortarF(base, [](const V7 &v) { return v.W - 1e-4f; }) || !RecortarF(base, [&](const V7 &v) { return sg * v.q; })) { desborde = true; break; }
+				if (base.n == 0) continue;
+				for (const RU &r : rs) {
+					if (qpos && (tu1 < r.u0 || tu0 > r.u1 || tv1 < r.v0 || tv0 > r.v1)) continue;
+					St().recortes++;
+					Poli pol;
+					pol.Copiar(base);
+					bool ok = true;
+					if (ok && std::isfinite(r.u0)) ok = RecortarF(pol, [&](const V7 &v) { return sg * (v.u - r.u0 * v.q); });
+					if (ok && std::isfinite(r.u1)) ok = RecortarF(pol, [&](const V7 &v) { return sg * (r.u1 * v.q - v.u); });
+					if (ok && std::isfinite(r.v0)) ok = RecortarF(pol, [&](const V7 &v) { return sg * (v.v - r.v0 * v.q); });
+					if (ok && std::isfinite(r.v1)) ok = RecortarF(pol, [&](const V7 &v) { return sg * (r.v1 * v.q - v.v); });
+					if (!ok) { desborde = true; break; }
+					if (pol.n == 0) continue;
+					if (marcar(pol) && caja && todos(cb)) { St().llenos++; lleno = true; break; }
+				}
 			}
+		}
+		// un poligono que no entro en el arreglo (solo con NaN): sin recorte, el draw entero (exacto)
+		if (desborde) { St().desbordes++; return true; }
+		if (Cmp() >= 1) {
+			static std::vector<uint8_t> ref;
+			ref.assign(bloques.size(), 0);
+			bool hayRef = false;
+			bloquesF117(ref, hayRef);
+			long dif = 0;
+			for (size_t i = 0; i < ref.size(); i++) if (ref[i] != bloques[i]) dif++;
+			if (hayRef != hay) dif++;
+			St().cmpProy++;
+			if (dif) { St().cmpProyDif++; St().cmpDif += dif; }
 		}
 	}
 	if (!hay) { St().salteadas++; return false; }

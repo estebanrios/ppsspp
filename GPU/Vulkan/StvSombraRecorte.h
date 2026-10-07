@@ -88,8 +88,13 @@ struct Area {
 
 inline std::vector<Area> &Areas() { static std::vector<Area> a; return a; }
 inline int &Modo() { static int m = 1; return m; }
+// STV_SOMBRA_SINHEAP_v1: debug.stv.sombra.alg 1 = recorte sin memoria dinamica (defecto), 0 = el de f117.
+// debug.stv.sombra.cmp 1 = corre tambien el de f117 en cada proyeccion y cuenta bloques distintos (log STVSOMBRACMP).
+inline int &Alg() { static int a = 1; return a; }
+inline int &Cmp() { static int c = 0; return c; }
 
-struct Stats { int proyecciones = 0, recortadas = 0, salteadas = 0, invalidadas = 0, negros = 0, copias = 0, siluetas = 0, vramCambio = 0, cand = 0, rech[16] = {}; double areaTotal = 0, areaRecorte = 0, areaRecorte2 = 0, aTri = 0, aPoli = 0, aCajaTri = 0; };
+struct Stats { int proyecciones = 0, recortadas = 0, salteadas = 0, invalidadas = 0, negros = 0, copias = 0, siluetas = 0, vramCambio = 0, cand = 0, rech[16] = {}; double areaTotal = 0, areaRecorte = 0, areaRecorte2 = 0, aTri = 0, aPoli = 0, aCajaTri = 0;
+	long tri = 0, triSalto = 0, recortes = 0, llenos = 0; int desbordes = 0, cmpProy = 0, cmpProyDif = 0; long cmpDif = 0; };
 inline Stats &St() { static Stats s; return s; }
 
 inline u32 OffVram(u32 addr) { return addr & 0x001FFFFF; }
@@ -98,13 +103,27 @@ inline int Bpp(GEBufferFormat f) { return f == GE_FORMAT_8888 ? 4 : 2; }
 
 inline void InicioCuadro() {
 	Modo() = StvPropDef("debug.stv.sombra", 1);
+	Alg() = StvPropDef("debug.stv.sombra.alg", 1);
+	Cmp() = StvPropInt("debug.stv.sombra.cmp");
 	Areas().clear();
 	StvVramRangos().clear();
+	if (Cmp() >= 1 && Modo() < 2) {
+		static int n = 0;
+		Stats &s = St();
+		if (++n >= 120) {
+			n = 0;
+			STV_LOG("STVSOMBRACMP: proyecciones=%d comparadas=%d con_diferencia=%d bloques_distintos=%ld desbordes=%d | tri=%ld saltados=%ld recortes=%ld llenos=%ld (120 cuadros)",
+				s.proyecciones, s.cmpProy, s.cmpProyDif, s.cmpDif, s.desbordes, s.tri, s.triSalto, s.recortes, s.llenos);
+			s = Stats();
+		}
+	}
 	if (Modo() >= 2) {
 		static int n = 0;
 		Stats &s = St();
 		if (++n >= 120) {
 			n = 0;
+			STV_LOG("STVSOMBRA2: alg=%d tri=%ld saltados=%ld recortes=%ld llenos=%ld desbordes=%d | cmp: comparadas=%d con_diferencia=%d bloques_distintos=%ld",
+				Alg(), s.tri, s.triSalto, s.recortes, s.llenos, s.desbordes, s.cmpProy, s.cmpProyDif, s.cmpDif);
 			STV_LOG("STVSOMBRA: proyecciones=%d recortadas=%d salteadas=%d invalidadas=%d area %.0f%% del original | negros=%d copias=%d siluetas=%d vramCambio=%d cand=%d rech=%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
 				s.proyecciones, s.recortadas, s.salteadas, s.invalidadas, s.areaTotal > 0 ? 100.0 * s.areaRecorte / s.areaTotal : 0.0,
 				s.negros, s.copias, s.siluetas, s.vramCambio, s.cand, s.rech[0], s.rech[1], s.rech[2], s.rech[3], s.rech[4], s.rech[5], s.rech[6], s.rech[7], s.rech[8], s.rech[9], s.rech[10], s.rech[11]);
@@ -260,6 +279,56 @@ inline void Recortar(std::vector<V7> &p, F f) {
 		if ((fa >= 0) != (fb >= 0)) o.push_back(Lerp(a, b, fa / (fa - fb)));
 	}
 	p.swap(o);
+}
+
+// STV_SOMBRA_SINHEAP_v1 (arco Callisto, 2026-10-07). En la pelea con Callisto (GoS, ranura 5) el recorte de
+// arriba era el 70 % del hilo del GE: triangulos del piso x tiras sucias del mapa x signo, y en cada uno hasta
+// 6 Recortar que reservan un vector y liberan el anterior. El jemalloc del donante (ro.config.low_ram: una
+// arena con candado, sin cache por hilo) cobra cientos de ciclos por par: ~50 % del hilo era malloc/free, el
+// hilo llego a 27,5 ms por cuadro y el juego a 33 VPS con la GPU en 300 MHz. Esto es el MISMO recorte, con la
+// misma aritmetica, en un arreglo fijo. Un triangulo recortado por 6 planos tiene a lo sumo 9 vertices; con
+// NaN puede crecer mas: si no entra, el que llama renuncia al recorte (el draw entero, exacto).
+struct Poli {
+	enum { CAP = 32 };
+	V7 v[CAP];
+	int n = 0;
+	void Tri(const V7 &a, const V7 &b, const V7 &c) { v[0] = a; v[1] = b; v[2] = c; n = 3; }
+	void Copiar(const Poli &o) { n = o.n; for (int i = 0; i < n; i++) v[i] = o.v[i]; }
+};
+
+template <typename F>
+inline bool RecortarF(Poli &p, F f) {
+	if (p.n == 0) return true;
+	V7 o[Poli::CAP];
+	int m = 0;
+	for (int i = 0; i < p.n; i++) {
+		const V7 &a = p.v[i], &b = p.v[(i + 1) % p.n];
+		const float fa = f(a), fb = f(b);
+		if (fa >= 0) { if (m >= Poli::CAP) return false; o[m++] = a; }
+		if ((fa >= 0) != (fb >= 0)) { if (m >= Poli::CAP) return false; o[m++] = Lerp(a, b, fa / (fa - fb)); }
+	}
+	p.n = m;
+	for (int i = 0; i < m; i++) p.v[i] = o[i];
+	return true;
+}
+
+// Bloques de B px que puede marcar CUALQUIER poligono recortado de este triangulo, con la misma formula que el
+// marcado (caja +-1 px). Con los tres vertices delante de la camara (W > 0), la proyeccion de una combinacion
+// convexa cae en la envolvente de las proyecciones, asi que la caja de los vertices acota todo recorte; el
+// margen e cubre el redondeo de los Lerp (100 veces lo esperable). false = no se puede acotar.
+inline bool CajaTriangulo(const V7 *const tri[3], int B, int nbx, int nby, int cb[4]) {
+	float x1 = 1e30f, y1 = 1e30f, x2 = -1e30f, y2 = -1e30f;
+	for (int k = 0; k < 3; k++) {
+		const V7 &v = *tri[k];
+		if (!(v.W > 1e-4f) || !std::isfinite(v.X) || !std::isfinite(v.Y) || !std::isfinite(v.W)) return false;
+		const float x = v.X / v.W, y = v.Y / v.W;
+		if (!(std::fabs(x) <= 1e6f) || !(std::fabs(y) <= 1e6f)) return false;
+		x1 = std::min(x1, x); y1 = std::min(y1, y); x2 = std::max(x2, x); y2 = std::max(y2, y);
+	}
+	const float ex = 0.1f + 1e-4f * std::max(std::fabs(x1), std::fabs(x2)), ey = 0.1f + 1e-4f * std::max(std::fabs(y1), std::fabs(y2));
+	cb[0] = std::max(0, (int)std::floor((x1 - ex - 1.0f) / B)); cb[2] = std::min(nbx - 1, (int)std::floor((x2 + ex + 1.0f) / B));
+	cb[1] = std::max(0, (int)std::floor((y1 - ey - 1.0f) / B)); cb[3] = std::min(nby - 1, (int)std::floor((y2 + ey + 1.0f) / B));
+	return true;
 }
 
 // Caja en pantalla (pixeles del render target PSP, ya sin offset) de los fragmentos cuyo (u/q,v/q) cae
