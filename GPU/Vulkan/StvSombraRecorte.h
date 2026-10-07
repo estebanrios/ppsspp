@@ -94,7 +94,7 @@ inline int &Alg() { static int a = 1; return a; }
 inline int &Cmp() { static int c = 0; return c; }
 
 struct Stats { int proyecciones = 0, recortadas = 0, salteadas = 0, invalidadas = 0, negros = 0, copias = 0, siluetas = 0, vramCambio = 0, cand = 0, rech[16] = {}; double areaTotal = 0, areaRecorte = 0, areaRecorte2 = 0, aTri = 0, aPoli = 0, aCajaTri = 0;
-	long tri = 0, triSalto = 0, recortes = 0, llenos = 0; int desbordes = 0, cmpProy = 0, cmpProyDif = 0; long cmpDif = 0; };
+	long tri = 0, triFuera = 0, triSalto = 0, recortes = 0, llenos = 0; int desbordes = 0, cmpProy = 0, cmpProyDif = 0; long cmpDif = 0; };
 inline Stats &St() { static Stats s; return s; }
 
 inline u32 OffVram(u32 addr) { return addr & 0x001FFFFF; }
@@ -112,8 +112,8 @@ inline void InicioCuadro() {
 		Stats &s = St();
 		if (++n >= 120) {
 			n = 0;
-			STV_LOG("STVSOMBRACMP: proyecciones=%d comparadas=%d con_diferencia=%d bloques_distintos=%ld desbordes=%d | tri=%ld saltados=%ld recortes=%ld llenos=%ld (120 cuadros)",
-				s.proyecciones, s.cmpProy, s.cmpProyDif, s.cmpDif, s.desbordes, s.tri, s.triSalto, s.recortes, s.llenos);
+			STV_LOG("STVSOMBRACMP: proyecciones=%d comparadas=%d con_diferencia=%d bloques_distintos=%ld desbordes=%d | tri=%ld fuera=%ld saltados=%ld recortes=%ld llenos=%ld (120 cuadros)",
+				s.proyecciones, s.cmpProy, s.cmpProyDif, s.cmpDif, s.desbordes, s.tri, s.triFuera, s.triSalto, s.recortes, s.llenos);
 			s = Stats();
 		}
 	}
@@ -122,8 +122,8 @@ inline void InicioCuadro() {
 		Stats &s = St();
 		if (++n >= 120) {
 			n = 0;
-			STV_LOG("STVSOMBRA2: alg=%d tri=%ld saltados=%ld recortes=%ld llenos=%ld desbordes=%d | cmp: comparadas=%d con_diferencia=%d bloques_distintos=%ld",
-				Alg(), s.tri, s.triSalto, s.recortes, s.llenos, s.desbordes, s.cmpProy, s.cmpProyDif, s.cmpDif);
+			STV_LOG("STVSOMBRA2: alg=%d tri=%ld fuera=%ld saltados=%ld recortes=%ld llenos=%ld desbordes=%d | cmp: comparadas=%d con_diferencia=%d bloques_distintos=%ld",
+				Alg(), s.tri, s.triFuera, s.triSalto, s.recortes, s.llenos, s.desbordes, s.cmpProy, s.cmpProyDif, s.cmpDif);
 			STV_LOG("STVSOMBRA: proyecciones=%d recortadas=%d salteadas=%d invalidadas=%d area %.0f%% del original | negros=%d copias=%d siluetas=%d vramCambio=%d cand=%d rech=%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
 				s.proyecciones, s.recortadas, s.salteadas, s.invalidadas, s.areaTotal > 0 ? 100.0 * s.areaRecorte / s.areaTotal : 0.0,
 				s.negros, s.copias, s.siluetas, s.vramCambio, s.cand, s.rech[0], s.rech[1], s.rech[2], s.rech[3], s.rech[4], s.rech[5], s.rech[6], s.rech[7], s.rech[8], s.rech[9], s.rech[10], s.rech[11]);

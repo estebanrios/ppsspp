@@ -746,6 +746,10 @@ bool DrawEngineVulkan::StvSomProyeccion(GEPrimitiveType prim, int vertexCount, b
 			for (int by = cb[1]; by <= cb[3]; by++) for (int bx = cb[0]; bx <= cb[2]; bx++) if (!bloques[(size_t)by * nbx + bx]) return false;
 			return true;
 		};
+		// caja (u,v) que une todas las tiras: un triangulo con q > 0 que cae fuera de ella no pasa el rechazo rapido
+		// de ninguna tira (comparaciones exactas contra el minimo/maximo), y el de f117 no le hacia nada
+		RU U = rs[0];
+		for (const RU &r : rs) { U.u0 = std::min(U.u0, r.u0); U.u1 = std::max(U.u1, r.u1); U.v0 = std::min(U.v0, r.v0); U.v1 = std::max(U.v1, r.v1); }
 		for (int t = 0; t + 2 < vertexCount && !desborde; t += 3) {
 			const V7 *tri[3] = { &vs[ind[t]], &vs[ind[t + 1]], &vs[ind[t + 2]] };
 			St().tri++;
@@ -754,6 +758,7 @@ bool DrawEngineVulkan::StvSomProyeccion(GEPrimitiveType prim, int vertexCount, b
 			if (qpos) {
 				tu0 = tu1 = tri[0]->u / tri[0]->q; tv0 = tv1 = tri[0]->v / tri[0]->q;
 				for (int k = 1; k < 3; k++) { const float u = tri[k]->u / tri[k]->q, v = tri[k]->v / tri[k]->q; tu0 = std::min(tu0, u); tu1 = std::max(tu1, u); tv0 = std::min(tv0, v); tv1 = std::max(tv1, v); }
+				if (tu1 < U.u0 || tu0 > U.u1 || tv1 < U.v0 || tv0 > U.v1) { St().triFuera++; continue; }
 			}
 			int cb[4];
 			const bool caja = CajaTriangulo(tri, B, nbx, nby, cb);
@@ -762,12 +767,17 @@ bool DrawEngineVulkan::StvSomProyeccion(GEPrimitiveType prim, int vertexCount, b
 			for (int sgn = 0; sgn < 2 && !lleno && !desborde; sgn++) {
 				if (qpos && sgn == 1) continue;
 				const float sg = sgn == 0 ? 1.0f : -1.0f;
+				// los recortes por W y por el signo de q, recien cuando una tira acepta el triangulo
 				Poli base;
-				base.Tri(*tri[0], *tri[1], *tri[2]);
-				if (!RecortarF(base, [](const V7 &v) { return v.W - 1e-4f; }) || !RecortarF(base, [&](const V7 &v) { return sg * v.q; })) { desborde = true; break; }
-				if (base.n == 0) continue;
+				bool baseHecha = false;
 				for (const RU &r : rs) {
 					if (qpos && (tu1 < r.u0 || tu0 > r.u1 || tv1 < r.v0 || tv0 > r.v1)) continue;
+					if (!baseHecha) {
+						baseHecha = true;
+						base.Tri(*tri[0], *tri[1], *tri[2]);
+						if (!RecortarF(base, [](const V7 &v) { return v.W - 1e-4f; }) || !RecortarF(base, [&](const V7 &v) { return sg * v.q; })) { desborde = true; break; }
+					}
+					if (base.n == 0) break;   // vacio para todas las tiras
 					St().recortes++;
 					Poli pol;
 					pol.Copiar(base);
