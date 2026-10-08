@@ -157,14 +157,10 @@ void UpdateNativeMenuKeys() {
 		SingleInputMappingFromPspButton(CTRL_LTRIGGER, &tabLeft, true);
 		SingleInputMappingFromPspButton(CTRL_RTRIGGER, &tabRight, true);
 	}
-	{
-		static int ultimo = -1;
-		const int ahora = g_Config.bStvMenuFijo ? (confirmWithCross ? 1 : 2) : 0;
-		if (ahora != ultimo) {
-			ultimo = ahora;
-			ERROR_LOG(Log::System, "STVMENU: botones del menu %s", ahora == 0 ? "segun el mapeo del juego" : (ahora == 1 ? "fijos: A acepta, B vuelve" : "fijos: B acepta, A vuelve"));
-		}
-	}
+	// Testigo en CADA llamada (son pocas: arranque, carga de juego, pantalla de mapeo). La primera ocurre antes de
+	// que el registro este listo: un testigo que solo avisa "al cambiar" callaba siempre.
+	ERROR_LOG(Log::System, "STVMENU: botones del menu %s (aceptar=%d volver=%d)", g_Config.bStvMenuFijo ? "fijos" : "segun el mapeo",
+		confirmKeys.empty() ? -1 : (int)confirmKeys[0].keyCode, cancelKeys.empty() ? -1 : (int)cancelKeys[0].keyCode);
 	SingleInputMappingFromPspButton(CTRL_UP, &upKeys, true);
 	SingleInputMappingFromPspButton(CTRL_DOWN, &downKeys, true);
 	SingleInputMappingFromPspButton(CTRL_LEFT, &leftKeys, true);
