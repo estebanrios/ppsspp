@@ -972,6 +972,9 @@ static const ConfigSetting touchControlSettings[] = {
 
 static const ConfigSetting controlSettings[] = {
 	ConfigSetting("HapticFeedback", SETTING(g_Config, bHapticFeedback), false, CfgFlag::PER_GAME),
+	// STV_CONTROLES_v1: globales (NO por juego): deciden como se tratan los mapeos por juego.
+	ConfigSetting("STVControlesGlobales", SETTING(g_Config, bStvControlesGlobales), true, CfgFlag::DEFAULT),
+	ConfigSetting("STVMenuFijo", SETTING(g_Config, bStvMenuFijo), true, CfgFlag::DEFAULT),
 	
 #if defined(USING_WIN_UI)
 	ConfigSetting("IgnoreWindowsKey", SETTING(g_Config, bIgnoreWindowsKey), false, CfgFlag::PER_GAME),
@@ -1969,6 +1972,16 @@ bool Config::SaveGameConfig(const std::string &gameId, std::string_view titleFor
 
 	KeyMap::SaveToIni(iniFile);
 	iniFile.Save(fullIniFilePath);
+	// STV_CONTROLES_v1: con un solo mapeo, el que esta activo (el general, o lo que el usuario cambio dentro del
+	// juego) se guarda TAMBIEN en controls.ini. Sin esto, un cambio hecho con un juego abierto quedaba solo en el
+	// ini de ese juego (asi quedo el de Ghost of Sparta) y los demas seguian con el viejo.
+	if (bStvControlesGlobales) {
+		IniFile controllerIniFile;
+		controllerIniFile.Load(controllerIniFilename_);
+		KeyMap::SaveToIni(controllerIniFile);
+		if (controllerIniFile.Save(controllerIniFilename_))
+			ERROR_LOG(Log::Loader, "STVCONTROLES: mapeo guardado en el general (%s) desde el juego %s", controllerIniFilename_.c_str(), gameId.c_str());
+	}
 
 	INFO_LOG(Log::Loader, "Game-specific config saved: '%s'", fullIniFilePath.c_str());
 
@@ -2027,7 +2040,14 @@ bool Config::LoadGameConfig(const std::string &gameId) {
 		}
 	}
 
-	KeyMap::LoadFromIni(iniFile);
+	// STV_CONTROLES_v1: con un solo mapeo, el [ControlMapping] del ini del juego se ignora y manda controls.ini
+	// (los ini por juego guardan una copia del mapeo activo en cada guardado: siete juegos tenian el viejo).
+	if (bStvControlesGlobales) {
+		LoadStandardControllerIni();
+		ERROR_LOG(Log::Loader, "STVCONTROLES: el juego %s usa el mapeo general (controls.ini)", gameId.c_str());
+	} else {
+		KeyMap::LoadFromIni(iniFile);
+	}
 
 	if (!appendedConfigFileName_.ToString().empty() &&
 		std::find(appendedConfigUpdatedGames_.begin(), appendedConfigUpdatedGames_.end(), gameId) == appendedConfigUpdatedGames_.end()) {

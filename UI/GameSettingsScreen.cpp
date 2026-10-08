@@ -871,6 +871,11 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 	controlsSettings->Add(new Choice(co->T("Calibrate analog stick")))->OnClick.Add([this](UI::EventParams &e) {
 		screenManager()->push(new AnalogCalibrationScreen(gamePath_));
 	});
+	// STV_CONTROLES_v1
+	controlsSettings->Add(new CheckBox(&g_Config.bStvControlesGlobales, "Un mapeo para todos los juegos (STV)"));
+	controlsSettings->Add(new CheckBox(&g_Config.bStvMenuFijo, "Menus: A acepta, B vuelve (STV)"))->OnClick.Add([](UI::EventParams &e) {
+		KeyMap::UpdateNativeMenuKeys();
+	});
 
 #if defined(USING_WIN_UI) || (PPSSPP_PLATFORM(LINUX) && !PPSSPP_PLATFORM(ANDROID))
 	controlsSettings->Add(new CheckBox(&g_Config.bSystemControls, co->T("Enable standard shortcut keys")));

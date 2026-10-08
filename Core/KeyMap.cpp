@@ -141,11 +141,30 @@ void UpdateNativeMenuKeys() {
 	const int confirmKey = confirmWithCross ? CTRL_CROSS : CTRL_CIRCLE;
 	const int cancelKey = confirmWithCross ? CTRL_CIRCLE : CTRL_CROSS;
 
-	SingleInputMappingFromPspButton(confirmKey, &confirmKeys, true);
-	SingleInputMappingFromPspButton(cancelKey, &cancelKeys, true);
-	SingleInputMappingFromPspButton(CTRL_TRIANGLE, &infoKeys, true);
-	SingleInputMappingFromPspButton(CTRL_LTRIGGER, &tabLeft, true);
-	SingleInputMappingFromPspButton(CTRL_RTRIGGER, &tabRight, true);
+	// STV_CONTROLES_v1: menus con botones FIJOS (los del mapeo de siempre: Equis en A, Circulo en B, Triangulo en
+	// Y, L1/R1), sin depender del mapeo del juego. Si no, con Equis en el boton de abajo (posicion de la PSP) el
+	// menu de PPSSPP aceptaba con B y volvia con A.
+	if (g_Config.bStvMenuFijo) {
+		confirmKeys.push_back(InputMapping(DEVICE_ID_ANY, confirmWithCross ? NKCODE_BUTTON_A : NKCODE_BUTTON_B));
+		cancelKeys.push_back(InputMapping(DEVICE_ID_ANY, confirmWithCross ? NKCODE_BUTTON_B : NKCODE_BUTTON_A));
+		infoKeys.push_back(InputMapping(DEVICE_ID_ANY, NKCODE_BUTTON_Y));
+		tabLeft.push_back(InputMapping(DEVICE_ID_ANY, NKCODE_BUTTON_L1));
+		tabRight.push_back(InputMapping(DEVICE_ID_ANY, NKCODE_BUTTON_R1));
+	} else {
+		SingleInputMappingFromPspButton(confirmKey, &confirmKeys, true);
+		SingleInputMappingFromPspButton(cancelKey, &cancelKeys, true);
+		SingleInputMappingFromPspButton(CTRL_TRIANGLE, &infoKeys, true);
+		SingleInputMappingFromPspButton(CTRL_LTRIGGER, &tabLeft, true);
+		SingleInputMappingFromPspButton(CTRL_RTRIGGER, &tabRight, true);
+	}
+	{
+		static int ultimo = -1;
+		const int ahora = g_Config.bStvMenuFijo ? (confirmWithCross ? 1 : 2) : 0;
+		if (ahora != ultimo) {
+			ultimo = ahora;
+			ERROR_LOG(Log::System, "STVMENU: botones del menu %s", ahora == 0 ? "segun el mapeo del juego" : (ahora == 1 ? "fijos: A acepta, B vuelve" : "fijos: B acepta, A vuelve"));
+		}
+	}
 	SingleInputMappingFromPspButton(CTRL_UP, &upKeys, true);
 	SingleInputMappingFromPspButton(CTRL_DOWN, &downKeys, true);
 	SingleInputMappingFromPspButton(CTRL_LEFT, &leftKeys, true);

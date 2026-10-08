@@ -490,6 +490,10 @@ public:
 
 	// Controls Visibility
 	bool bShowTouchControls = false;
+	// STV_CONTROLES_v1 (2026-10-08): un solo mapeo para todos los juegos (controls.ini; lo que se cambia dentro
+	// de un juego va al general) y menus de PPSSPP con botones fijos (A acepta, B vuelve), sin depender del mapeo.
+	bool bStvControlesGlobales = true;
+	bool bStvMenuFijo = true;
 
 	// Disable diagonals
 	bool bDisableDpadDiagonals;
